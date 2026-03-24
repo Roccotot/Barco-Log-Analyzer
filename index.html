@@ -181,6 +181,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .ver-name{font-family:var(--mono);font-size:11px;color:var(--text);flex:1}
 .ver-vs{font-family:var(--mono);font-size:11px;color:var(--accent);flex-shrink:0}
 
+/* ── SORTABLE HEADERS ── */
+.tbl th.sortable{cursor:pointer;user-select:none;transition:color .15s}
+.tbl th.sortable:hover{color:var(--accent)}
+.tbl th.sort-asc::after{content:' ▲';color:var(--accent);font-size:9px}
+.tbl th.sort-desc::after{content:' ▼';color:var(--accent);font-size:9px}
+
 /* ── MISC ── */
 .empty{text-align:center;padding:28px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)}
 .sec-label{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;display:flex;align-items:center;gap:10px}
@@ -194,7 +200,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <div id="upload-screen">
   <div class="grid-bg"></div>
   <div class="brand">
-    <div class="brand-eyebrow">Barco Cinema Projector</div>
+    <div class="brand-eyebrow">Sigra Film — Barco Cinema Projector</div>
     <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
     <div class="brand-sub">DP2000 · DP2K · DP4K · Alchemy Series</div>
   </div>
@@ -219,7 +225,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 
 <div id="results-screen">
   <div class="topbar">
-    <div class="tb-logo">Barco Cinema<br><strong id="tb-model">—</strong></div>
+    <div class="tb-logo">Sigra Film · Barco Cinema<br><strong id="tb-model">—</strong></div>
     <div class="tb-badges">
       <span class="badge b-blue" id="tb-serial"></span>
       <span class="badge b-blue" id="tb-ip"></span>
@@ -249,6 +255,24 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
+
+function sortTh(th){
+  const tbody=th.closest('table').querySelector('tbody');
+  const ths=[...th.closest('tr').querySelectorAll('th')];
+  const col=ths.indexOf(th);
+  const asc=!th.classList.contains('sort-asc');
+  ths.forEach(h=>h.classList.remove('sort-asc','sort-desc'));
+  th.classList.add(asc?'sort-asc':'sort-desc');
+  const rows=[...tbody.querySelectorAll('tr')];
+  rows.sort((a,b)=>{
+    const av=(a.cells[col]?.textContent||'').trim();
+    const bv=(b.cells[col]?.textContent||'').trim();
+    const an=parseFloat(av),bn=parseFloat(bv);
+    if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;
+    return asc?av.localeCompare(bv,'it'):bv.localeCompare(av,'it');
+  });
+  rows.forEach(r=>tbody.appendChild(r));
+}
 const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 function setProgress(p,m){$('prog-fill').style.width=p+'%';$('prog-msg').textContent=m}
@@ -494,7 +518,7 @@ function renderOverview(r){
   const cards=buildAnalysis(r);
   const errs=[...r.critEvents.map(e=>({...e,cls:'sc',lbl:'CRITICAL'})),...r.errEvents.map(e=>({...e,cls:'se',lbl:'ERROR'}))];
   const errPrev=errs.length
-    ?`<div class="panel"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Ultimi Errori</span><span class="ph-count">${errs.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Data</th><th>Messaggio</th></tr></thead><tbody>${errs.slice(0,10).map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`
+    ?`<div class="panel"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Ultimi Errori</span><span class="ph-count">${errs.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${errs.slice(0,10).map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`
     :`<div class="panel"><div class="pb"><div class="empty"><span class="sev so">OK</span> &nbsp;Nessun errore nel ProjectorLog</div></div></div>`;
   $('tab-overview').innerHTML=`${kpiHtml}<div class="sec-label">Analisi Automatica</div><div class="analysis-list">${cards}</div><div class="sec-label" style="margin-top:20px;">Riepilogo Errori</div>${errPrev}`;
 }
@@ -531,7 +555,7 @@ function renderErrors(r){
     ${brow('Lamp on fail',r.lampOnFails,maxC,'#ff8c00,#e65100')}
   </div></div></div>`;
   const rows=all.length?all.map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="dt">${esc(e.proc)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty"><span class="sev so">OK</span> &nbsp;Nessun errore</div></td></tr>`;
-  $('tab-errors').innerHTML=`${barsHtml}<div class="panel"><div class="ph"><div class="dot ${all.length?'d-red':'d-green'}"></div><span class="ph-title">Tutti gli Errori — ProjectorLog</span><span class="ph-count">${all.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Data</th><th>Processo</th><th>Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  $('tab-errors').innerHTML=`${barsHtml}<div class="panel"><div class="ph"><div class="dot ${all.length?'d-red':'d-green'}"></div><span class="ph-title">Tutti gli Errori — ProjectorLog</span><span class="ph-count">${all.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Processo</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 function brow(label,count,max,grad){const p=max>0?Math.round(count/max*100):0;return `<div class="bar-row"><span class="bar-label">${label}</span><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:linear-gradient(90deg,${grad})">${count}</div></div></div>`;}
 
@@ -622,7 +646,7 @@ function renderComm(r){
     <div class="kpi ${r.lampOnFails>0?'kor':'ko'}"><div class="kl">Lamp Fail</div><div class="kv">${r.lampOnFails}</div><div class="ks">accensioni fallite</div></div>
     <div class="kpi ${r.ntpIssues>0?'kw':'ko'}"><div class="kl">NTP Issues</div><div class="kv">${r.ntpIssues}</div><div class="ks">clock sync</div></div>
   </div>
-  <div class="panel"><div class="ph"><div class="dot ${r.commErrCount>0?'d-red':r.commWarnCount>0?'d-yel':'d-green'}"></div><span class="ph-title">Warning &amp; Errori Rilevanti</span><span class="ph-count">${r.commEvents.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Livello</th><th>Data/Ora</th><th>Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  <div class="panel"><div class="ph"><div class="dot ${r.commErrCount>0?'d-red':r.commWarnCount>0?'d-yel':'d-green'}"></div><span class="ph-title">Warning &amp; Errori Rilevanti</span><span class="ph-count">${r.commEvents.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Livello</th><th class="sortable" onclick="sortTh(this)">Data/Ora</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 // ── Raw ──
