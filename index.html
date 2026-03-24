@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#080b10">
+<title>Barco Log Analyzer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap');
+
+:root {
+  --bg:      #080b10;
+  --s1:      #0d1119;
+  --s2:      #111822;
+  --border:  #1a2232;
+  --border2: #243040;
+  --accent:  #00c8f0;
+  --green:   #00e676;
+  --yellow:  #ffd740;
+  --orange:  #ff9100;
+  --red:     #ff3d3d;
+  --crit:    #ff1744;
+  --text:    #afc4d8;
+  --muted:   #506070;
+  --white:   #e4eef8;
+  --mono: 'Share Tech Mono', monospace;
+  --sans: 'Barlow Condensed', sans-serif;
+  --r: 4px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* ── UPLOAD ── */
+#upload-screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px;position:relative;background:radial-gradient(ellipse 80% 60% at 50% 100%,rgba(0,200,240,.06) 0%,transparent 70%),linear-gradient(180deg,#080b10,#0a0f1a)}
+.grid-bg{position:fixed;inset:0;pointer-events:none;background-image:linear-gradient(rgba(0,200,240,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(0,200,240,.035) 1px,transparent 1px);background-size:48px 48px}
+.brand{text-align:center;margin-bottom:40px;animation:fadeUp .7s ease both}
+.brand-eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--accent);text-transform:uppercase;margin-bottom:10px;opacity:.65}
+.brand-title{font-weight:900;font-size:clamp(44px,10vw,80px);text-transform:uppercase;line-height:.95;color:var(--white)}
+.brand-title em{font-style:normal;color:var(--accent);display:block;font-weight:300;font-size:.45em;letter-spacing:8px;margin-top:8px}
+.brand-sub{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);margin-top:14px}
+#drop-zone{width:100%;max-width:520px;border:2px dashed var(--border2);border-radius:var(--r);padding:52px 32px 40px;text-align:center;cursor:pointer;background:rgba(13,17,25,.7);transition:all .22s ease;animation:fadeUp .7s .12s ease both;position:relative}
+#drop-zone:hover,#drop-zone.over{border-color:var(--accent);background:rgba(0,200,240,.04);box-shadow:0 0 48px rgba(0,200,240,.08)}
+#drop-zone.over{transform:scale(1.015)}
+#file-input{display:none}
+.dz-icon{width:60px;height:60px;border-radius:50%;border:1.5px solid var(--border2);margin:0 auto 18px;display:flex;align-items:center;justify-content:center;transition:all .22s}
+#drop-zone:hover .dz-icon{border-color:var(--accent);box-shadow:0 0 20px rgba(0,200,240,.2)}
+.dz-icon svg{width:26px;height:26px;stroke:var(--muted);fill:none;stroke-width:1.5;transition:stroke .22s}
+#drop-zone:hover .dz-icon svg{stroke:var(--accent)}
+.dz-title{font-weight:700;font-size:19px;text-transform:uppercase;letter-spacing:1px;color:var(--white);margin-bottom:8px}
+.dz-sub{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.5px;line-height:1.9}
+.dz-btn{display:inline-block;margin-top:22px;padding:9px 26px;border-radius:2px;border:1px solid var(--border2);background:transparent;color:var(--accent);font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all .2s}
+.dz-btn:hover{border-color:var(--accent);background:rgba(0,200,240,.07);box-shadow:0 0 18px rgba(0,200,240,.12)}
+.compat{margin-top:24px;font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:1px;line-height:1.8;animation:fadeUp .7s .24s ease both;text-align:center}
+.compat b{color:var(--accent);font-weight:400}
+
+/* ── PROGRESS ── */
+#progress-screen{display:none;min-height:100vh;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:40px}
+.prog-label{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--accent);text-transform:uppercase}
+.prog-track{width:320px;max-width:90vw;height:2px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),#00f0d0);border-radius:2px;transition:width .3s ease;width:0%}
+#prog-msg{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:1px}
+
+/* ── RESULTS ── */
+#results-screen{display:none}
+.topbar{background:#0b0f1a;border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:100}
+.tb-logo{font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;border-left:2px solid var(--accent);padding-left:10px;line-height:1.4}
+.tb-logo strong{display:block;font-size:16px;color:var(--white);letter-spacing:2px}
+.tb-badges{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+.badge{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:4px 9px;border-radius:2px;border:1px solid;text-transform:uppercase;white-space:nowrap}
+.b-blue{background:rgba(0,200,240,.06);border-color:rgba(0,200,240,.2);color:var(--accent)}
+.b-green{background:rgba(0,230,118,.06);border-color:rgba(0,230,118,.25);color:var(--green)}
+.b-warn{background:rgba(255,215,64,.06);border-color:rgba(255,215,64,.28);color:var(--yellow)}
+.b-crit{background:rgba(255,23,68,.08);border-color:rgba(255,23,68,.38);color:var(--crit);animation:pulse-c 2s ease-in-out infinite}
+@keyframes pulse-c{0%,100%{box-shadow:none}50%{box-shadow:0 0 10px rgba(255,23,68,.3)}}
+.reset-btn{background:transparent;border:1px solid var(--border2);color:var(--muted);font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:4px 12px;cursor:pointer;border-radius:2px;transition:all .2s;text-transform:uppercase}
+.reset-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── TABS ── */
+.tabs{display:flex;background:var(--s1);border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;padding:12px 18px;color:var(--muted);cursor:pointer;border:none;background:transparent;white-space:nowrap;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+.content{padding:20px;max-width:1300px;margin:0 auto}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+
+/* ── LAYOUT ── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.grid32{display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px}
+.g1{margin-bottom:16px}
+@media(max-width:760px){.grid2,.grid32{grid-template-columns:1fr}.content{padding:12px}.topbar{padding:10px 12px}}
+
+/* ── PANEL ── */
+.panel{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:0}
+.ph{background:rgba(255,255,255,.02);border-bottom:1px solid var(--border);padding:9px 14px;display:flex;align-items:center;gap:8px}
+.ph-title{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--accent)}
+.ph-count{margin-left:auto;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:2px;background:rgba(0,200,240,.07);color:var(--accent);border:1px solid rgba(0,200,240,.15)}
+.pb{padding:14px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.d-blue{background:var(--accent)}.d-green{background:var(--green)}.d-yel{background:var(--yellow)}.d-ora{background:var(--orange)}.d-red{background:var(--crit);animation:blink 1.4s step-start infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+
+/* ── KPI ── */
+.kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--s1);border:1px solid var(--border);border-top:2px solid var(--border2);border-radius:var(--r);padding:14px 12px;transition:transform .2s}
+.kpi:hover{transform:translateY(-2px)}
+.kpi.kc{border-top-color:var(--crit)}.kpi.kw{border-top-color:var(--yellow)}.kpi.ko{border-top-color:var(--green)}.kpi.ki{border-top-color:var(--accent)}.kpi.kor{border-top-color:var(--orange)}
+.kl{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.kv{font-family:var(--mono);font-size:30px;color:var(--white);line-height:1}
+.kpi.kc .kv{color:var(--crit)}.kpi.kw .kv{color:var(--yellow)}.kpi.ko .kv{color:var(--green)}.kpi.kor .kv{color:var(--orange)}
+.ks{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.3}
+
+/* ── TABLES ── */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);padding:7px 10px;text-align:left;border-bottom:1px solid var(--border);font-weight:600;position:sticky;top:0;background:var(--s1);z-index:1}
+.tbl td{padding:7px 10px;font-family:var(--mono);font-size:12px;border-bottom:1px solid rgba(26,34,50,.5);vertical-align:top;color:var(--text)}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:rgba(255,255,255,.015)}
+.tbl td.dt{color:var(--muted);white-space:nowrap}
+.tbl td.hi{color:var(--white)}
+.tbl td.msg{font-size:11px}
+.scroll-wrap{max-height:360px;overflow-y:auto}
+.scroll-wrap::-webkit-scrollbar{width:3px}
+.scroll-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* ── SEVERITY BADGES ── */
+.sev{display:inline-block;padding:2px 6px;border-radius:2px;font-size:9px;letter-spacing:1px;font-weight:700;white-space:nowrap;border:1px solid}
+.sc{background:rgba(255,23,68,.14);color:var(--crit);border-color:rgba(255,23,68,.35)}
+.se{background:rgba(255,61,61,.11);color:#ff7070;border-color:rgba(255,61,61,.28)}
+.sw{background:rgba(255,215,64,.09);color:var(--yellow);border-color:rgba(255,215,64,.28)}
+.si{background:rgba(0,200,240,.07);color:var(--accent);border-color:rgba(0,200,240,.18)}
+.so{background:rgba(0,230,118,.07);color:var(--green);border-color:rgba(0,230,118,.2)}
+
+/* ── INFO GRID ── */
+.ig{display:grid;grid-template-columns:1fr 1fr}
+.ic{padding:10px 13px;border-bottom:1px solid var(--border);border-right:1px solid var(--border)}
+.ic:nth-child(2n){border-right:none}
+.ic:nth-last-child(-n+2){border-bottom:none}
+@media(max-width:400px){.ig{grid-template-columns:1fr}.ic:nth-child(n){border-right:none}.ic:last-child{border-bottom:none}}
+.ik{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.iv{font-family:var(--mono);font-size:12px;color:var(--white)}
+.iv.ok{color:var(--green)}.iv.wa{color:var(--yellow)}.iv.er{color:var(--crit)}
+
+/* ── BAR CHART ── */
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar-row{display:flex;align-items:center;gap:10px}
+.bar-label{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:90px;text-align:right;flex-shrink:0}
+.bar-track{flex:1;height:16px;background:rgba(255,255,255,.04);border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;padding-left:8px;display:flex;align-items:center;min-width:26px;font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.75);animation:bar-in .9s cubic-bezier(.4,0,.2,1) both}
+@keyframes bar-in{from{width:0 !important}}
+
+/* ── LAMP TIMELINE ── */
+.lrow{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(26,34,50,.45);font-family:var(--mono);font-size:11px}
+.lrow:last-child{border-bottom:none}
+.lr-dt{color:var(--muted);min-width:80px;flex-shrink:0}
+.lr-bar{flex:1;height:12px;border-radius:1px;overflow:hidden;position:relative;background:rgba(26,34,50,.9)}
+.lr-bar.n{border:1px solid rgba(255,215,64,.22)}.lr-bar.c{border:1px solid rgba(255,23,68,.35)}
+.lr-fill{position:absolute;top:0;left:0;bottom:0;border-radius:1px}
+.lr-bar.n .lr-fill{background:linear-gradient(90deg,rgba(255,215,64,.4),rgba(255,145,0,.4))}
+.lr-bar.c .lr-fill{background:linear-gradient(90deg,rgba(255,23,68,.5),rgba(255,61,61,.5))}
+.lr-dur{color:var(--text);min-width:52px;text-align:right;flex-shrink:0}
+.lr-note{font-size:9px;color:var(--crit);min-width:55px;flex-shrink:0}
+
+/* ── ANALYSIS CARDS ── */
+.analysis-list{display:flex;flex-direction:column;gap:10px}
+.acard{border-radius:3px;padding:13px 15px;border:1px solid;border-left:3px solid;font-size:14px;line-height:1.65}
+.acard.ac{background:rgba(255,23,68,.05);border-color:rgba(255,23,68,.18);border-left-color:var(--crit)}
+.acard.aw{background:rgba(255,215,64,.04);border-color:rgba(255,215,64,.18);border-left-color:var(--yellow)}
+.acard.ao{background:rgba(0,200,240,.04);border-color:rgba(0,200,240,.15);border-left-color:var(--accent)}
+.acard.ag{background:rgba(0,230,118,.04);border-color:rgba(0,230,118,.15);border-left-color:var(--green)}
+.acard strong{color:var(--white);font-weight:700;display:block;margin-bottom:4px}
+.acard.ac strong{color:var(--crit)}.acard.aw strong{color:var(--yellow)}.acard.ag strong{color:var(--green)}
+
+/* ── VERSIONS ── */
+.ver-cat{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);padding:10px 13px 4px;border-bottom:1px solid var(--border)}
+.ver-row{display:flex;padding:6px 13px;border-bottom:1px solid rgba(26,34,50,.4);gap:12px}
+.ver-row:last-child{border-bottom:none}
+.ver-name{font-family:var(--mono);font-size:11px;color:var(--text);flex:1}
+.ver-vs{font-family:var(--mono);font-size:11px;color:var(--accent);flex-shrink:0}
+
+/* ── MISC ── */
+.empty{text-align:center;padding:28px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.sec-label{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;display:flex;align-items:center;gap:10px}
+.sec-label::after{content:'';flex:1;height:1px;background:var(--border)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.panel{animation:fadeUp .45s ease both}.kpi{animation:fadeUp .45s ease both}
+</style>
+</head>
+<body>
+
+<div id="upload-screen">
+  <div class="grid-bg"></div>
+  <div class="brand">
+    <div class="brand-eyebrow">Barco Cinema Projector</div>
+    <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
+    <div class="brand-sub">DP2000 · DP2K · DP4K · Alchemy Series</div>
+  </div>
+  <div id="drop-zone">
+    <input type="file" id="file-input" accept=".zip">
+    <div class="dz-icon">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </div>
+    <div class="dz-title">Carica Diagnostics Package</div>
+    <div class="dz-sub">Trascina il file .zip esportato dal Barco Communicator<br>Maintenance → Diagnostics → Download Diagnostics Package</div>
+    <button class="dz-btn" onclick="document.getElementById('file-input').click()">Seleziona file ZIP</button>
+  </div>
+  <div class="compat">Compatibile con qualsiasi proiettore Barco Cinema<br><b>Elaborazione 100% locale — nessun dato inviato a server</b></div>
+</div>
+
+<div id="progress-screen">
+  <div class="grid-bg"></div>
+  <div class="prog-label">Analisi in corso…</div>
+  <div class="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
+  <div id="prog-msg"></div>
+</div>
+
+<div id="results-screen">
+  <div class="topbar">
+    <div class="tb-logo">Barco Cinema<br><strong id="tb-model">—</strong></div>
+    <div class="tb-badges">
+      <span class="badge b-blue" id="tb-serial"></span>
+      <span class="badge b-blue" id="tb-ip"></span>
+      <span class="badge" id="tb-status"></span>
+      <button class="reset-btn" onclick="appReset()">← Nuovo file</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="errors">Errori</button>
+    <button class="tab" data-tab="lamp">Lampada</button>
+    <button class="tab" data-tab="device">Dispositivo</button>
+    <button class="tab" data-tab="communicator">Communicator</button>
+    <button class="tab" data-tab="raw">Log Raw</button>
+  </div>
+  <div class="content">
+    <div class="tab-pane active" id="tab-overview"></div>
+    <div class="tab-pane" id="tab-errors"></div>
+    <div class="tab-pane" id="tab-lamp"></div>
+    <div class="tab-pane" id="tab-device"></div>
+    <div class="tab-pane" id="tab-communicator"></div>
+    <div class="tab-pane" id="tab-raw"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function setProgress(p,m){$('prog-fill').style.width=p+'%';$('prog-msg').textContent=m}
+function showScreen(id){
+  ['upload-screen','progress-screen','results-screen'].forEach(s=>{
+    const el=$(s);
+    el.style.display=(s===id)?(id==='progress-screen'?'flex':'block'):'none';
+  });
+}
+function appReset(){$('file-input').value='';showScreen('upload-screen')}
+const tick=()=>new Promise(r=>setTimeout(r,30));
+
+$('tabs').addEventListener('click',e=>{
+  const t=e.target.closest('.tab');if(!t)return;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');$('tab-'+t.dataset.tab).classList.add('active');
+});
+
+const dz=$('drop-zone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');if(e.dataTransfer.files[0])load(e.dataTransfer.files[0])});
+$('file-input').addEventListener('change',()=>{if($('file-input').files[0])load($('file-input').files[0])});
+
+// ══ LOAD ══
+async function load(file){
+  showScreen('progress-screen');setProgress(5,'Lettura archivio…');
+  try{
+    const zip=await JSZip.loadAsync(file);
+    const files={allNames:Object.keys(zip.files).filter(n=>!zip.files[n].dir)};
+    setProgress(15,'Identificazione file…');
+    for(const name of files.allNames){
+      const low=name.toLowerCase().replace(/.*\//,'');
+      if(/projectorlog/i.test(low))          files.projLog=await zip.files[name].async('string');
+      else if(/communicatorlog/i.test(low))  files.commLog=await zip.files[name].async('string');
+      else if(/version_info/i.test(low))     files.versionInfo=await zip.files[name].async('string');
+      else if(/^parameters\.txt$/i.test(low))files.parameters=await zip.files[name].async('string');
+      else if(/error_messages/i.test(low))   files.errorMsg=await zip.files[name].async('string');
+      else if(/cinemafrontend/i.test(low))   files.cfeStatus=await zip.files[name].async('string');
+    }
+    setProgress(40,'Parsing log…');await tick();
+    const r=analyze(files);
+    setProgress(85,'Generazione report…');await tick();
+    render(r);
+    setProgress(100,'Completato');await tick();
+    showScreen('results-screen');
+  }catch(err){
+    showScreen('results-screen');
+    $('tab-overview').innerHTML=`<div class="panel"><div class="pb"><div style="color:var(--crit);font-family:var(--mono);font-size:13px;margin-bottom:10px;">ERRORE ELABORAZIONE</div><div style="font-family:var(--mono);font-size:11px;color:var(--muted);">File non riconosciuto o corrotto. Verificare che sia un Barco Diagnostics Package (.zip) valido.<br><br>${esc(err.message)}</div></div></div>`;
+  }
+}
+
+// ══ PARSE ══
+function xmlAttr(xml,attr){
+  if(!xml)return null;
+  const m=new RegExp(attr+'\\s*=\\s*"([^"]*)"','i').exec(xml);
+  return m?m[1].replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&lt;/g,'<').trim():null;
+}
+function parseLines(txt){return txt?txt.replace(/\r/g,'').split('\n'):[]}
+
+function parseProjLine(line){
+  const m=/^(\d+)=(\w{3}\s+\d+\s+[\d:]+)\s+\w+\s+(\S+)\s+(\S+?)(?:\[\d+\])?:\s+(.+)$/.exec(line.trim());
+  if(!m)return null;
+  const fac=m[3];const parts=fac.split('.');
+  return{idx:+m[1],dt:m[2].trim(),level:parts[1]||'info',proc:m[4].replace(/\[\d+\]/,''),msg:m[5].trim()};
+}
+
+// ══ ANALYZE ══
+function analyze(files){
+  const r={
+    device:{},fw:{},cfe:{},lamp:{runtime:'—',desc:'—',article:'—'},
+    critEvents:[],errEvents:[],warnEvents:[],
+    commEvents:[],lampSessions:[],
+    bootCount:0,dowserFails:0,i2cTimeouts:0,lampCritOff:0,
+    lampOnFails:0,rtcFails:0,ntpIssues:0,
+    commWarnCount:0,commErrCount:0,
+    allNames:files.allNames||[],
+    versionCats:[],
+    rawProjLines:[],rawCommLines:[]
+  };
+
+  // Parameters
+  if(files.parameters){
+    const p=files.parameters;
+    r.device.identifier=xmlAttr(p,'Identifier')||'DP-Series';
+    r.device.serial=xmlAttr(p,'serial_number')||'—';
+    r.device.runtime=xmlAttr(p,'runtime')||'—';
+    r.device.ip=xmlAttr(p,'IP_address')||'—';
+    r.device.gateway=xmlAttr(p,'IP_default_gateway')||'—';
+    r.device.mask=xmlAttr(p,'IP_subnet_mask')||'—';
+    r.device.btn1=xmlAttr(p,'BUTTON_01')||'—';
+    r.device.btn2=xmlAttr(p,'BUTTON_02')||'—';
+    r.device.cloKey=xmlAttr(p,'CLO')||'—';
+    r.device.lensKey=xmlAttr(p,'Lens_memory')||'—';
+    r.device.snmp=xmlAttr(p,'SNMP')||'—';
+    r.device.commVer=xmlAttr(p,'Version')||'—';
+    const lb=/<Lamp([^>]*)>/i.exec(p);
+    if(lb){
+      const mr=/runtime="(\d+)"/i.exec(lb[0]);if(mr)r.lamp.runtime=mr[1];
+      const md=/description="([^"]+)"/i.exec(lb[0]);if(md)r.lamp.desc=md[1].replace(/&quot;/g,'"');
+      const ma=/article_number="([^"]+)"/i.exec(lb[0]);if(ma)r.lamp.article=ma[1];
+    }
+    const lens=/<Lens([^>]*)>/i.exec(p);
+    if(lens){const m=/description="([^"]+)"/i.exec(lens[0]);r.device.lens=m?m[1].replace(/&quot;/g,'"'):'—';}
+    else r.device.lens='—';
+    const cfeB=/<CinemaFrontEnd>([\s\S]*?)<\/CinemaFrontEnd>/i.exec(p);
+    if(cfeB){
+      r.device.cfeIp=xmlAttr(cfeB[1],'IP_address')||'—';
+      r.device.td3Exp=xmlAttr(cfeB[1],'ThreeDee_expiration_date')||'—';
+      r.device.td3Sts=xmlAttr(cfeB[1],'ThreeDee_status_license')||'—';
+    }
+  }
+
+  // Version Info
+  if(files.versionInfo){
+    const v=files.versionInfo;
+    const pm=(/name="barco"\s+vs="([^"]+)"/i).exec(v);r.fw.barcoPkg=pm?pm[1]:'—';
+    const tm=(/name="ti"\s+vs="([^"]+)"/i).exec(v);r.fw.tiPkg=tm?tm[1]:'—';
+    const getVs=n=>{const m=new RegExp(`name="${n}"[^>]*vs="([^"]+)"`,'i').exec(v);return m?m[1]:null;};
+    r.fw.dp80=getVs('dp80')||'—';r.fw.kernel=getVs('kernel')||'—';
+    r.fw.armMain=getVs('arm_main_application')||'—';r.fw.dspMain=getVs('dsp_main_application')||'—';
+    // parse cats
+    const catRe=/<cat name="([^"]+)">([\s\S]*?)<\/cat>/gi;let cm;
+    while((cm=catRe.exec(v))!==null){
+      const items=[];const ir=/<file name="([^"]+)"(?:\s+displayname="([^"]*)")?[^>]*vs="([^"]+)"/gi;let im;
+      while((im=ir.exec(cm[2]))!==null)items.push({name:im[1],display:im[2]||im[1],vs:im[3]});
+      if(items.length)r.versionCats.push({cat:cm[1],items});
+    }
+  }
+
+  // CFE Status
+  if(files.cfeStatus){
+    const s=files.cfeStatus;
+    const ok=k=>s.toLowerCase().includes(k.toLowerCase());
+    r.cfe.system=ok('system status ok')?'OK':ok('system status')?'FAULT':'—';
+    r.cfe.selfTest=ok('self test ok')?'OK':ok('self test')?'FAULT':'—';
+    r.cfe.ifaceArm=ok('interface board arm ok')?'OK':ok('interface board arm')?'FAULT':'—';
+    r.cfe.ifaceFpga=ok('interface board fpga ok')?'OK':ok('interface board fpga')?'FAULT':'—';
+    r.cfe.dsp=ok('processor board dsp ok')?'OK':ok('processor board dsp')?'FAULT':'—';
+    r.cfe.procFpga=ok('processor board fpga ok')?'OK':ok('processor board fpga')?'FAULT':'—';
+    r.cfe.enclosure=ok('security enclosure not present')?'NOT PRESENT':ok('security enclosure ok')?'OK':'—';
+    r.cfe.td3=ok('3d status')?(ok('enabled')?'ENABLED':'DISABLED'):'—';
+    r.cfe.encrypt=(()=>{const m=/link encryption(\S+)/i.exec(s);return m&&m[1]?m[1]:'NONE';})();
+    r.cfe.raw=s.trim();
+  }
+
+  // Error messages file
+  r.hasActiveErrors=files.errorMsg&&!/no error/i.test(files.errorMsg);
+
+  // ProjectorLog
+  if(files.projLog){
+    const lines=parseLines(files.projLog);
+    r.rawProjLines=lines.filter(l=>l.trim()&&l!=='[LOG]');
+    const lampOns=[],lampOffs=[];
+    for(const line of lines){
+      const p=parseProjLine(line);if(!p)continue;
+      if(p.msg.includes('starting application')&&p.proc==='dp80')r.bootCount++;
+      const lvl=p.level;const ml=p.msg.toLowerCase();
+      if(lvl==='crit'||lvl==='emerg'){
+        r.critEvents.push(p);
+        if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
+      }else if(lvl==='err'||lvl==='error'){
+        r.errEvents.push(p);
+        if(ml.includes('dowser')&&ml.includes('failed'))r.dowserFails++;
+        if(ml.includes('i2c')&&ml.includes('timeout'))r.i2cTimeouts++;
+        if(ml.includes('rtc time failed'))r.rtcFails++;
+      }else if(lvl==='warn'||lvl==='warning'){
+        r.warnEvents.push(p);
+      }
+      if(ml.includes('set lamp on')&&!ml.includes('already on')&&!ml.includes('failed')&&!ml.includes('interval'))lampOns.push(p);
+      if(ml.includes('set lamp off')&&!ml.includes('already off'))lampOffs.push(p);
+    }
+    // Lamp sessions
+    const usedOff=new Set();
+    for(let i=0;i<Math.min(lampOns.length,20);i++){
+      const on=lampOns[i];let off=null;
+      for(let j=0;j<lampOffs.length;j++){if(!usedOff.has(j)&&lampOffs[j].idx>on.idx){off=j;break;}}
+      const nextIdx=i+1<lampOns.length?lampOns[i+1].idx:Infinity;
+      const crit=r.critEvents.some(c=>c.idx>on.idx&&c.idx<(off!=null?lampOffs[off].idx:nextIdx)&&c.msg.toLowerCase().includes('lamp'));
+      let dur=null;
+      if(off!==null){usedOff.add(off);dur=minDiff(on.dt,lampOffs[off].dt);}
+      r.lampSessions.push({dt:on.dt,dur,crit});
+    }
+  }
+
+  // CommunicatorLog
+  if(files.commLog){
+    const lines=parseLines(files.commLog);
+    r.rawCommLines=lines.filter(l=>l.trim()).slice(0,2000);
+    for(const line of lines){
+      const m=/^(INFO|WARN|ERROR|DEBUG)\s+([\d\-\s:]+?)\s*:\s*(.+)$/.exec(line.replace(/\r/g,''));
+      if(!m)continue;
+      const[,lvl,dt,msgRaw]=m;
+      const msg=msgRaw.trim().replace(/^"|"$/g,'');
+      if(lvl==='WARN')r.commWarnCount++;
+      if(lvl==='ERROR')r.commErrCount++;
+      if((lvl==='WARN'||lvl==='ERROR')&&!msg.includes('Object::connect')&&!msg.includes('unregisterTimer')){
+        if(msg.includes('lamp')&&msg.includes('failed'))r.lampOnFails++;
+        if(msg.includes('clock adjustment'))r.ntpIssues++;
+        if(msg.includes('lamp')||msg.includes('tamper')||msg.includes('clock')||msg.includes('NTP')||msg.includes('timeout')||msg.includes('failed')||lvl==='ERROR')
+          r.commEvents.push({lvl,dt:dt.trim(),msg});
+      }
+      if(!r.device.cinema&&msg.includes('credentials')){const c=/"([^"]+)"/.exec(msg);if(c)r.device.cinema=c[1];}
+    }
+  }
+  return r;
+}
+
+function minDiff(a,b){
+  try{
+    const toM=d=>{const p=d.trim().split(/\s+/);const t=(p[2]||p[1]||'').split(':').map(Number);return t.length>=2?t[0]*60+t[1]:null;};
+    const x=toM(a),y=toM(b);if(x===null||y===null)return null;
+    let d=y-x;if(d<0)d+=1440;return d>0&&d<720?d:null;
+  }catch{return null;}
+}
+
+// ══ RENDER ══
+function render(r){
+  const d=r.device;
+  $('tb-model').textContent=d.identifier||'DP-Series';
+  $('tb-serial').textContent='S/N: '+(d.serial||'—');
+  $('tb-ip').textContent='IP: '+(d.ip||'—').trim();
+  const sb=$('tb-status');
+  if(r.lampCritOff>0||r.dowserFails>3){sb.textContent='⚠ ATTENZIONE RICHIESTA';sb.className='badge b-crit';}
+  else if(r.critEvents.length+r.errEvents.length>0){sb.textContent='⚠ ANOMALIE PRESENTI';sb.className='badge b-warn';}
+  else{sb.textContent='✓ LOG PULITO';sb.className='badge b-green';}
+  renderOverview(r);renderErrors(r);renderLamp(r);renderDevice(r);renderComm(r);renderRaw(r);
+}
+
+// ── Overview ──
+function renderOverview(r){
+  const d=r.device;const lh=parseInt(r.lamp.runtime)||0;
+  const kpis=[
+    {l:'Ore Proiettore',v:d.runtime||'—',s:'runtime totale',cls:'ki'},
+    {l:'Ore Lampada',v:r.lamp.runtime||'—',s:r.lamp.desc,cls:lh>1500?'kw':'ko'},
+    {l:'Shutdown Critici',v:r.lampCritOff,s:'lamp switched off',cls:r.lampCritOff>0?'kc':'ko'},
+    {l:'Dowser Falliti',v:r.dowserFails,s:'set dowser open failed',cls:r.dowserFails>3?'kc':r.dowserFails>0?'kor':'ko'},
+    {l:'i2c Timeout',v:r.i2cTimeouts,s:'bus busy errors',cls:r.i2cTimeouts>5?'kw':r.i2cTimeouts>0?'kor':'ko'},
+    {l:'Boot Registrati',v:r.bootCount,s:'riavvii nel log',cls:'ki'},
+  ];
+  const kpiHtml=`<div class="kpi-strip">${kpis.map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${esc(k.s||'')}</div></div>`).join('')}</div>`;
+  const cards=buildAnalysis(r);
+  const errs=[...r.critEvents.map(e=>({...e,cls:'sc',lbl:'CRITICAL'})),...r.errEvents.map(e=>({...e,cls:'se',lbl:'ERROR'}))];
+  const errPrev=errs.length
+    ?`<div class="panel"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Ultimi Errori</span><span class="ph-count">${errs.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Data</th><th>Messaggio</th></tr></thead><tbody>${errs.slice(0,10).map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`
+    :`<div class="panel"><div class="pb"><div class="empty"><span class="sev so">OK</span> &nbsp;Nessun errore nel ProjectorLog</div></div></div>`;
+  $('tab-overview').innerHTML=`${kpiHtml}<div class="sec-label">Analisi Automatica</div><div class="analysis-list">${cards}</div><div class="sec-label" style="margin-top:20px;">Riepilogo Errori</div>${errPrev}`;
+}
+
+function buildAnalysis(r){
+  const items=[];
+  if(r.lampCritOff>0)items.push(['ac',`🔴 CRITICO — Spegnimento automatico lampada (${r.lampCritOff}×)`,`Il sistema ha rilevato la lampada spenta autonomamente e ha forzato lo shutdown. Verificare alimentatore lampada, connettori lamphouse e sensore lampada.`]);
+  if(r.dowserFails>3)items.push(['ac',`🔴 CRITICO — Meccanismo Dowser (${r.dowserFails} fallimenti)`,`Il dowser non risponde ai comandi. Con ${r.dowserFails} fallimenti il meccanismo è probabilmente usurato o bloccato. Ispezione fisica o sostituzione consigliata.`]);
+  else if(r.dowserFails>0)items.push(['aw',`⚠ Dowser — ${r.dowserFails} fallimenti`,`Alcuni comandi dowser non hanno risposto. Monitorare la frequenza.`]);
+  if(r.i2cTimeouts>8)items.push(['aw',`⚠ i2c Bus Timeout (${r.i2cTimeouts}×)`,`Timeout ricorrenti sul bus i2c interno. Possibile connessione allentata su Cinema Controller board o component aging.`]);
+  else if(r.i2cTimeouts>0)items.push(['aw',`⚠ i2c Bus Timeout (${r.i2cTimeouts}×)`,`Errori bus i2c presenti. Tenere monitorato.`]);
+  if(r.rtcFails>0)items.push(['aw',`⚠ RTC Read Failed (${r.rtcFails}×)`,`Il Real Time Clock non è stato letto correttamente al boot. Possibile batteria RTC scarica.`]);
+  if(r.lampOnFails>0)items.push(['aw',`⚠ Lamp ON Failed (${r.lampOnFails}× nel Communicator)`,`Tentativi falliti di accensione lampada. Verificare lamphouse, connettori e alimentatore.`]);
+  if(r.ntpIssues>3)items.push(['ao',`ℹ NTP / Orologio (${r.ntpIssues}×)`,`L'orologio del proiettore si discosta dall'NTP. Verificare configurazione server NTP.`]);
+  if(r.device.cloKey&&r.device.cloKey.toLowerCase()==='not valid')items.push(['aw',`⚠ CLO Key non valida`,`Il proiettore opera senza Constant Light Output. La luminosità non viene compensata nel tempo.`]);
+  const lh=parseInt(r.lamp.runtime)||0;
+  if(lh>1500)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}`]);
+  const cfeFault=Object.values(r.cfe).some(v=>v==='FAULT');
+  if(cfeFault)items.push(['ac',`🔴 CRITICO — Cinema Front End: componente in FAULT`,`Uno o più componenti CFE risultano in stato FAULT. Verificare subito.`]);
+  else if(r.cfe.system==='OK'&&r.critEvents.length===0&&r.errEvents.length===0)items.push(['ag',`✅ CFE OK — Nessun errore rilevato`,`Cinema Front End operativo. Tutti i componenti rispondono correttamente.`]);
+  if(!items.length)items.push(['ag',`✅ Log pulito`,`Nessuna anomalia rilevante trovata in questo diagnostics package.`]);
+  return items.map(([cls,t,b])=>`<div class="acard ${cls}"><strong>${esc(t)}</strong>${esc(b)}</div>`).join('');
+}
+
+// ── Errors ──
+function renderErrors(r){
+  const all=[...r.critEvents.map(e=>({...e,cls:'sc',lbl:'CRITICAL'})),...r.errEvents.map(e=>({...e,cls:'se',lbl:'ERROR'})),...r.warnEvents.map(e=>({...e,cls:'sw',lbl:'WARN'}))];
+  const maxC=Math.max(r.dowserFails,r.i2cTimeouts,r.lampCritOff,r.rtcFails,r.lampOnFails,1);
+  const barsHtml=`<div class="panel g1"><div class="ph"><div class="dot d-ora"></div><span class="ph-title">Distribuzione per Tipo</span></div><div class="pb"><div class="bars">
+    ${brow('Dowser fail',r.dowserFails,maxC,'#ff9100,#e65100')}
+    ${brow('i2c timeout',r.i2cTimeouts,maxC,'#ff4444,#ff1744')}
+    ${brow('Lamp crit off',r.lampCritOff,maxC,'#ff1744,#b71c1c')}
+    ${brow('RTC failed',r.rtcFails,maxC,'#ffd740,#f9a825')}
+    ${brow('Lamp on fail',r.lampOnFails,maxC,'#ff8c00,#e65100')}
+  </div></div></div>`;
+  const rows=all.length?all.map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="dt">${esc(e.proc)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty"><span class="sev so">OK</span> &nbsp;Nessun errore</div></td></tr>`;
+  $('tab-errors').innerHTML=`${barsHtml}<div class="panel"><div class="ph"><div class="dot ${all.length?'d-red':'d-green'}"></div><span class="ph-title">Tutti gli Errori — ProjectorLog</span><span class="ph-count">${all.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Data</th><th>Processo</th><th>Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function brow(label,count,max,grad){const p=max>0?Math.round(count/max*100):0;return `<div class="bar-row"><span class="bar-label">${label}</span><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:linear-gradient(90deg,${grad})">${count}</div></div></div>`;}
+
+// ── Lamp ──
+function renderLamp(r){
+  const lh=parseInt(r.lamp.runtime)||0;
+  const pct=Math.min(100,Math.round(lh/2000*100));
+  const lc=lh>1500?'var(--crit)':lh>1000?'var(--yellow)':'var(--green)';
+  const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/600*100)):4;return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${s.dur?s.dur+'min':s.crit?'ABORT':'…'}</span>${s.crit?'<span class="lr-note">⚡ CRIT</span>':'<span class="lr-note"></span>'}</div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata</div>`;
+  $('tab-lamp').innerHTML=`
+  <div class="grid2">
+    <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Stato Lampada</span></div>
+      <div class="ig">
+        <div class="ic"><div class="ik">Descrizione</div><div class="iv">${esc(r.lamp.desc)}</div></div>
+        <div class="ic"><div class="ik">Codice Articolo</div><div class="iv">${esc(r.lamp.article)}</div></div>
+        <div class="ic"><div class="ik">Ore Attuali</div><div class="iv ${lh>1500?'wa':''}">${r.lamp.runtime}h</div></div>
+        <div class="ic"><div class="ik">Vita Stimata</div><div class="iv">~2000h</div></div>
+      </div>
+      <div class="pb" style="padding-top:8px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:1px;">UTILIZZO STIMATO ${pct}%</div>
+        <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${lc};border-radius:4px;transition:width 1s ease;"></div></div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px;">${lh}h / 2000h</div>
+      </div>
+    </div>
+    <div class="panel"><div class="ph"><div class="dot ${r.lampCritOff>0?'d-red':'d-yel'}"></div><span class="ph-title">Statistiche</span></div>
+      <div class="ig">
+        <div class="ic"><div class="ik">Shutdown Critici</div><div class="iv ${r.lampCritOff>0?'er':''}">${r.lampCritOff}</div></div>
+        <div class="ic"><div class="ik">Tentativi Falliti</div><div class="iv ${r.lampOnFails>0?'wa':''}">${r.lampOnFails}</div></div>
+        <div class="ic"><div class="ik">Sessioni Trovate</div><div class="iv">${r.lampSessions.length}</div></div>
+        <div class="ic"><div class="ik">CLO Key</div><div class="iv ${r.device.cloKey==='not valid'?'wa':r.device.cloKey==='valid'?'ok':''}">${(r.device.cloKey||'—').toUpperCase()}</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Timeline Sessioni Lampada</span><span class="ph-count">${r.lampSessions.length}</span></div><div class="pb">${sessHtml}</div></div>`;
+}
+
+// ── Device ──
+function renderDevice(r){
+  const d=r.device,fw=r.fw,cf=r.cfe;
+  const iv=(val,okV,waV)=>{let cls='';const v=(val||'').toLowerCase();if(okV&&v===okV.toLowerCase())cls='ok';if(waV&&v===waV.toLowerCase())cls='wa';if(v==='fault')cls='er';return`<div class="iv ${cls}">${esc(val||'—')}</div>`;};
+  const cfeOk=['system','selfTest','ifaceArm','ifaceFpga','dsp','procFpga'].every(k=>cf[k]==='OK'||cf[k]==='—');
+  const versHtml=r.versionCats&&r.versionCats.length?r.versionCats.map(cat=>`<div class="ver-cat">${esc(cat.cat)}</div>${cat.items.map(i=>`<div class="ver-row"><span class="ver-name">${esc(i.display||i.name)}</span><span class="ver-vs">${esc(i.vs)}</span></div>`).join('')}`).join(''):`<div class="empty">Version info non disponibile</div>`;
+  $('tab-device').innerHTML=`
+  <div class="grid2">
+    <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Proiettore</span></div>
+      <div class="ig">
+        <div class="ic"><div class="ik">Modello</div>${iv(d.identifier)}</div>
+        <div class="ic"><div class="ik">Seriale</div>${iv(d.serial)}</div>
+        <div class="ic"><div class="ik">Ore Runtime</div>${iv(d.runtime)}</div>
+        <div class="ic"><div class="ik">IP Address</div>${iv((d.ip||'').trim())}</div>
+        <div class="ic"><div class="ik">Default GW</div>${iv((d.gateway||'').trim())}</div>
+        <div class="ic"><div class="ik">Subnet Mask</div>${iv((d.mask||'').trim())}</div>
+        <div class="ic"><div class="ik">Obiettivo</div>${iv(d.lens)}</div>
+        <div class="ic"><div class="ik">Communicator</div>${iv(d.commVer)}</div>
+        <div class="ic"><div class="ik">Button 1</div>${iv(d.btn1)}</div>
+        <div class="ic"><div class="ik">Button 2</div>${iv(d.btn2)}</div>
+        <div class="ic"><div class="ik">CLO Key</div>${iv(d.cloKey,'valid','not valid')}</div>
+        <div class="ic"><div class="ik">SNMP</div>${iv(d.snmp)}</div>
+        <div class="ic"><div class="ik">Cinema</div>${iv(d.cinema)}</div>
+        <div class="ic"><div class="ik">CFE IP</div>${iv(d.cfeIp)}</div>
+      </div>
+    </div>
+    <div class="panel"><div class="ph"><div class="dot ${cfeOk?'d-green':'d-red'}"></div><span class="ph-title">Cinema Front End</span></div>
+      <div class="ig">
+        <div class="ic"><div class="ik">System Status</div>${iv(cf.system,'OK')}</div>
+        <div class="ic"><div class="ik">Self Test</div>${iv(cf.selfTest,'OK')}</div>
+        <div class="ic"><div class="ik">Interface ARM</div>${iv(cf.ifaceArm,'OK')}</div>
+        <div class="ic"><div class="ik">Interface FPGA</div>${iv(cf.ifaceFpga,'OK')}</div>
+        <div class="ic"><div class="ik">Processor DSP</div>${iv(cf.dsp,'OK')}</div>
+        <div class="ic"><div class="ik">Processor FPGA</div>${iv(cf.procFpga,'OK')}</div>
+        <div class="ic"><div class="ik">Security Encl.</div>${iv(cf.enclosure,'OK','NOT PRESENT')}</div>
+        <div class="ic"><div class="ik">Link Encryption</div>${iv(cf.encrypt)}</div>
+        <div class="ic"><div class="ik">3D License</div>${iv(cf.td3,'ENABLED','DISABLED')}</div>
+        <div class="ic"><div class="ik">3D Expiry</div>${iv(d.td3Exp)}</div>
+      </div>
+    </div>
+  </div>
+  <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>`;
+}
+
+// ── Communicator ──
+function renderComm(r){
+  const rows=r.commEvents.length?r.commEvents.map(e=>`<tr><td><span class="sev ${e.lvl==='ERROR'?'se':'sw'}">${e.lvl}</span></td><td class="dt">${esc(e.dt)}</td><td class="hi" style="font-size:11px;">${esc(e.msg.replace(/\\t/g,' ').replace(/^0\s+/,''))}</td></tr>`).join(''):`<tr><td colspan="3"><div class="empty">Nessun warning/errore rilevante</div></td></tr>`;
+  $('tab-communicator').innerHTML=`
+  <div class="kpi-strip">
+    <div class="kpi ${r.commWarnCount>0?'kw':'ko'}"><div class="kl">Warning</div><div class="kv">${r.commWarnCount}</div><div class="ks">righe WARN</div></div>
+    <div class="kpi ${r.commErrCount>0?'kc':'ko'}"><div class="kl">Error</div><div class="kv">${r.commErrCount}</div><div class="ks">righe ERROR</div></div>
+    <div class="kpi ${r.lampOnFails>0?'kor':'ko'}"><div class="kl">Lamp Fail</div><div class="kv">${r.lampOnFails}</div><div class="ks">accensioni fallite</div></div>
+    <div class="kpi ${r.ntpIssues>0?'kw':'ko'}"><div class="kl">NTP Issues</div><div class="kv">${r.ntpIssues}</div><div class="ks">clock sync</div></div>
+  </div>
+  <div class="panel"><div class="ph"><div class="dot ${r.commErrCount>0?'d-red':r.commWarnCount>0?'d-yel':'d-green'}"></div><span class="ph-title">Warning &amp; Errori Rilevanti</span><span class="ph-count">${r.commEvents.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Livello</th><th>Data/Ora</th><th>Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+
+// ── Raw ──
+function renderRaw(r){
+  const mkPanel=(title,lines,max)=>{
+    if(!lines||!lines.length)return`<div class="panel g1"><div class="ph"><span class="ph-title">${title}</span></div><div class="pb"><div class="empty">File non presente</div></div></div>`;
+    const shown=lines.slice(0,max);
+    const more=lines.length>max?`<div style="padding:8px 14px;font-family:var(--mono);font-size:10px;color:var(--muted);">… ${lines.length-max} righe non mostrate</div>`:'';
+    return`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">${title}</span><span class="ph-count">${lines.length} righe</span></div><div class="scroll-wrap" style="max-height:400px;"><div style="padding:8px 14px;">${shown.map(l=>`<div style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;border-bottom:1px solid rgba(26,34,50,.3);padding:2px 0;">${esc(l)}</div>`).join('')}${more}</div></div></div>`;
+  };
+  const filesHtml=r.allNames.length?r.allNames.map(n=>`<div style="font-family:var(--mono);font-size:11px;color:var(--text);padding:6px 0;border-bottom:1px solid var(--border);">📄 ${esc(n)}</div>`).join(''):`<div class="empty">—</div>`;
+  $('tab-raw').innerHTML=`
+    <div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">File nell'archivio ZIP</span></div><div class="pb">${filesHtml}</div></div>
+    ${mkPanel('ProjectorLog — ultime 300 righe',[...r.rawProjLines].slice(-300),300)}
+    ${mkPanel('CommunicatorLog — prime 500 righe',r.rawCommLines.slice(0,500),500)}`;
+}
+</script>
+</body>
+</html>
