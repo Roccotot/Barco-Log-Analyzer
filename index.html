@@ -196,11 +196,113 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .sec-label::after{content:'';flex:1;height:1px;background:var(--border)}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
 .panel{animation:fadeUp .45s ease both}.kpi{animation:fadeUp .45s ease both}
+
+/* ════════════════════════════════════════
+   UPLOAD SCREEN — ANIMAZIONI SPETTACOLARI
+   ════════════════════════════════════════ */
+
+/* Grid animata */
+.grid-bg{animation:grid-drift 40s linear infinite}
+@keyframes grid-drift{to{background-position:48px 48px,48px 48px}}
+
+/* Canvas particelle */
+#pcv{position:fixed;inset:0;pointer-events:none;z-index:0}
+
+/* Fascio proiettore */
+.proj-beam{
+  position:fixed;top:0;left:50%;transform:translateX(-50%);
+  width:0;height:0;
+  border-left:42vw solid transparent;
+  border-right:42vw solid transparent;
+  border-top:70vh solid rgba(0,200,240,.022);
+  pointer-events:none;z-index:0;
+  animation:beam-breathe 7s ease-in-out infinite
+}
+@keyframes beam-breathe{0%,100%{opacity:.5}50%{opacity:1}}
+
+/* Z-index upload-screen children */
+#upload-screen>.brand,#upload-screen>#drop-zone,#upload-screen>.compat{
+  position:relative;z-index:1
+}
+
+/* Logo glow */
+.brand-logo{animation:logo-glow 4s ease-in-out 1.2s infinite}
+@keyframes logo-glow{
+  0%,100%{filter:drop-shadow(0 0 2px transparent) brightness(1)}
+  50%{filter:drop-shadow(0 0 24px rgba(0,200,240,.6)) brightness(1.07)}
+}
+
+/* Titolo glitch */
+.brand-title{animation:fadeUp .7s ease both,glitch-t 10s ease-in-out 3s infinite}
+@keyframes glitch-t{
+  0%,78%,100%{transform:none;filter:none}
+  79%{transform:skewX(-9deg) translateX(5px);
+      filter:drop-shadow(6px 0 rgba(255,0,85,.9)) drop-shadow(-6px 0 rgba(0,240,200,.9))}
+  80%{transform:skewX(5deg) translateX(-4px);filter:drop-shadow(-4px 0 rgba(255,0,85,.6))}
+  81%{transform:none;filter:drop-shadow(3px 0 rgba(0,240,200,.4))}
+  82%{transform:translateX(-3px);filter:none}
+  83%{transform:none}
+}
+
+/* Bordo conic-gradient rotante */
+@property --dz-a{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes dz-spin{to{--dz-a:360deg}}
+
+#drop-zone{
+  border:2px solid transparent;
+  background:
+    linear-gradient(rgba(13,17,25,.75),rgba(13,17,25,.75)) padding-box,
+    conic-gradient(from var(--dz-a),#1a2232 0%,#243040 22%,var(--accent) 36%,#00f0d0 42%,var(--accent) 48%,#243040 64%,#1a2232 100%) border-box;
+  animation:fadeUp .7s .12s ease both,dz-spin 6s linear infinite
+}
+#drop-zone:hover,#drop-zone.over{
+  border-color:transparent;
+  background:
+    linear-gradient(rgba(0,200,240,.04),rgba(0,200,240,.04)) padding-box,
+    conic-gradient(from var(--dz-a),#243040 0%,var(--accent) 34%,#00f0d0 42%,var(--accent) 50%,#243040 100%) border-box;
+  box-shadow:0 0 60px rgba(0,200,240,.16),inset 0 0 36px rgba(0,200,240,.05);
+  transform:none
+}
+#drop-zone.over{transform:scale(1.012)}
+
+/* Angoli HUD */
+.hud-corners{position:absolute;inset:10px;pointer-events:none;z-index:2}
+.hud-corners span{position:absolute;width:18px;height:18px;border-color:var(--accent);border-style:solid}
+.hud-corners span:nth-child(1){top:0;left:0;border-width:2px 0 0 2px;animation:hud-fade 3s ease-in-out infinite}
+.hud-corners span:nth-child(2){top:0;right:0;border-width:2px 2px 0 0;animation:hud-fade 3s ease-in-out .75s infinite}
+.hud-corners span:nth-child(3){bottom:0;left:0;border-width:0 0 2px 2px;animation:hud-fade 3s ease-in-out 1.5s infinite}
+.hud-corners span:nth-child(4){bottom:0;right:0;border-width:0 2px 2px 0;animation:hud-fade 3s ease-in-out 2.25s infinite}
+@keyframes hud-fade{0%,100%{opacity:.7}50%{opacity:.12}}
+
+/* Linea di scansione */
+.dz-scan{
+  position:absolute;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,rgba(0,200,240,.95) 30%,rgba(0,240,200,1) 50%,rgba(0,200,240,.95) 70%,transparent);
+  pointer-events:none;z-index:2;top:0;
+  animation:scan-sweep 2.8s ease-in-out infinite
+}
+@keyframes scan-sweep{
+  0%{top:0%;opacity:0}8%{opacity:.85}88%{opacity:.85}100%{top:100%;opacity:0}
+}
+
+/* Anelli pulsanti */
+.pulse-rings{position:absolute;inset:-2px;border-radius:var(--r);pointer-events:none;overflow:visible}
+.pulse-rings>div{
+  position:absolute;inset:0;
+  border:1px solid rgba(0,200,240,.28);
+  border-radius:var(--r);
+  animation:ring-out 3s ease-out infinite;opacity:0
+}
+.pulse-rings>div:nth-child(2){animation-delay:1s}
+.pulse-rings>div:nth-child(3){animation-delay:2s}
+@keyframes ring-out{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.14);opacity:0}}
 </style>
 </head>
 <body>
 
 <div id="upload-screen">
+  <canvas id="pcv"></canvas>
+  <div class="proj-beam"></div>
   <div class="grid-bg"></div>
   <div class="brand">
     <img src="logo_sigra.png" alt="Sigra Film" class="brand-logo">
@@ -209,6 +311,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
     <div class="brand-sub">DP2000 · DP2K · DP4K · Alchemy Series</div>
   </div>
   <div id="drop-zone">
+    <div class="hud-corners"><span></span><span></span><span></span><span></span></div>
+    <div class="dz-scan"></div>
+    <div class="pulse-rings"><div></div><div></div><div></div></div>
     <input type="file" id="file-input" accept=".zip">
     <div class="dz-icon">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -262,6 +367,58 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
+
+/* ── PARTICLE ENGINE ── */
+(function(){
+  const cv=document.getElementById('pcv');
+  if(!cv)return;
+  const cx=cv.getContext('2d');
+  let W,H,pts=[];
+  function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight}
+  window.addEventListener('resize',resize);resize();
+
+  class P{
+    r(){
+      this.x=Math.random()*W;
+      this.y=H+8;
+      this.s=Math.random()*1.6+.3;
+      this.v=Math.random()*.7+.15;
+      this.a=Math.random()*.38+.06;
+      this.dx=(Math.random()-.5)*.35;
+      this.trail=[];
+    }
+    constructor(){this.r();this.y=Math.random()*H;}
+    tick(){
+      this.trail.push({x:this.x,y:this.y});
+      if(this.trail.length>10)this.trail.shift();
+      this.y-=this.v;this.x+=this.dx;
+      if(this.y<-12)this.r();
+    }
+    draw(){
+      for(let i=0;i<this.trail.length;i++){
+        const f=i/this.trail.length;
+        cx.beginPath();
+        cx.arc(this.trail[i].x,this.trail[i].y,this.s*.5,0,Math.PI*2);
+        cx.fillStyle=`rgba(0,200,240,${this.a*f*.35})`;
+        cx.fill();
+      }
+      cx.beginPath();cx.arc(this.x,this.y,this.s,0,Math.PI*2);
+      cx.fillStyle=`rgba(0,200,240,${this.a})`;cx.fill();
+    }
+  }
+
+  for(let i=0;i<70;i++){pts.push(new P());}
+
+  function loop(){
+    cx.clearRect(0,0,W,H);
+    const us=$('upload-screen');
+    if(us&&us.style.display!=='none'){
+      pts.forEach(p=>{p.tick();p.draw();});
+    }
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
 
 function sortTh(th){
   const tbody=th.closest('table').querySelector('tbody');
