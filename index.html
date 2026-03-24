@@ -39,6 +39,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .brand-title{font-weight:900;font-size:clamp(44px,10vw,80px);text-transform:uppercase;line-height:.95;color:var(--white)}
 .brand-title em{font-style:normal;color:var(--accent);display:block;font-weight:300;font-size:.45em;letter-spacing:8px;margin-top:8px}
 .brand-sub{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);margin-top:14px}
+.brand-logo{height:48px;width:auto;margin-bottom:18px;opacity:.92;filter:brightness(1.1)}
 #drop-zone{width:100%;max-width:520px;border:2px dashed var(--border2);border-radius:var(--r);padding:52px 32px 40px;text-align:center;cursor:pointer;background:rgba(13,17,25,.7);transition:all .22s ease;animation:fadeUp .7s .12s ease both;position:relative}
 #drop-zone:hover,#drop-zone.over{border-color:var(--accent);background:rgba(0,200,240,.04);box-shadow:0 0 48px rgba(0,200,240,.08)}
 #drop-zone.over{transform:scale(1.015)}
@@ -64,8 +65,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 /* ── RESULTS ── */
 #results-screen{display:none}
 .topbar{background:#0b0f1a;border-bottom:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:100}
-.tb-logo{font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;border-left:2px solid var(--accent);padding-left:10px;line-height:1.4}
-.tb-logo strong{display:block;font-size:16px;color:var(--white);letter-spacing:2px}
+.tb-logo{display:flex;align-items:center;gap:10px;border-left:2px solid var(--accent);padding-left:10px}
+.tb-logo-text{font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;line-height:1.4}
+.tb-logo-text strong{display:block;font-size:16px;color:var(--white);letter-spacing:2px}
+.tb-logo img{height:28px;width:auto;opacity:.9;filter:brightness(1.1)}
 .tb-badges{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
 .badge{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:4px 9px;border-radius:2px;border:1px solid;text-transform:uppercase;white-space:nowrap}
 .b-blue{background:rgba(0,200,240,.06);border-color:rgba(0,200,240,.2);color:var(--accent)}
@@ -200,6 +203,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <div id="upload-screen">
   <div class="grid-bg"></div>
   <div class="brand">
+    <img src="logo_sigra.png" alt="Sigra Film" class="brand-logo">
     <div class="brand-eyebrow">Sigra Film — Barco Cinema Projector</div>
     <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
     <div class="brand-sub">DP2000 · DP2K · DP4K · Alchemy Series</div>
@@ -225,7 +229,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 
 <div id="results-screen">
   <div class="topbar">
-    <div class="tb-logo">Sigra Film · Barco Cinema<br><strong id="tb-model">—</strong></div>
+    <div class="tb-logo">
+      <img src="logo_sigra.png" alt="Sigra Film">
+      <div class="tb-logo-text">Barco Cinema<strong id="tb-model">—</strong></div>
+    </div>
     <div class="tb-badges">
       <span class="badge b-blue" id="tb-serial"></span>
       <span class="badge b-blue" id="tb-ip"></span>
