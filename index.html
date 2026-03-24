@@ -420,6 +420,19 @@ const $=id=>document.getElementById(id);
   loop();
 })();
 
+const _MO={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+function _parseDt(s){
+  // ISO: 2024-01-15 14:22:30
+  const iso=/(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2})/.exec(s);
+  if(iso)return new Date(+iso[1],+iso[2]-1,+iso[3],+iso[4],+iso[5]).getTime();
+  // Syslog con anno: 2024 Jan 15 14:22:30
+  const sl=/(\d{4})\s+(\w{3})\s+(\d+)\s+(\d+):(\d+)/.exec(s);
+  if(sl){const mo=_MO[sl[2].toLowerCase()];if(mo!=null)return new Date(+sl[1],mo,+sl[3],+sl[4],+sl[5]).getTime();}
+  // Syslog senza anno: Jan 15 14:22:30
+  const sl2=/(\w{3})\s+(\d+)\s+(\d+):(\d+)/.exec(s);
+  if(sl2){const mo=_MO[sl2[1].toLowerCase()];if(mo!=null)return new Date(2000,mo,+sl2[2],+sl2[3],+sl2[4]).getTime();}
+  return null;
+}
 function sortTh(th){
   const tbody=th.closest('table').querySelector('tbody');
   const ths=[...th.closest('tr').querySelectorAll('th')];
@@ -431,6 +444,8 @@ function sortTh(th){
   rows.sort((a,b)=>{
     const av=(a.cells[col]?.textContent||'').trim();
     const bv=(b.cells[col]?.textContent||'').trim();
+    const ad=_parseDt(av),bd=_parseDt(bv);
+    if(ad!==null&&bd!==null)return asc?ad-bd:bd-ad;
     const an=parseFloat(av),bn=parseFloat(bv);
     if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;
     return asc?av.localeCompare(bv,'it'):bv.localeCompare(av,'it');
