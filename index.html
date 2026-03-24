@@ -507,6 +507,10 @@ function parseProjLine(line){
 
 // ══ ANALYZE ══
 function analyze(files){
+  // Anno estratto dal CommunicatorLog (formato ISO), usato per arricchire i timestamp del ProjectorLog (syslog, senza anno)
+  const logYearM=files.commLog?/(\d{4})-\d{2}-\d{2}/.exec(files.commLog):null;
+  const logYear=logYearM?logYearM[1]:null;
+
   const r={
     device:{},fw:{},cfe:{},lamp:{runtime:'—',desc:'—',article:'—'},
     critEvents:[],errEvents:[],warnEvents:[],
@@ -642,6 +646,14 @@ function analyze(files){
       }
       if(!r.device.cinema&&msg.includes('credentials')){const c=/"([^"]+)"/.exec(msg);if(c)r.device.cinema=c[1];}
     }
+  }
+  // Arricchisci i timestamp del ProjectorLog con l'anno estratto dal CommLog
+  if(logYear){
+    const ey=e=>({...e,dt:logYear+' '+e.dt});
+    r.critEvents=r.critEvents.map(ey);
+    r.errEvents=r.errEvents.map(ey);
+    r.warnEvents=r.warnEvents.map(ey);
+    r.lampSessions=r.lampSessions.map(s=>({...s,dt:logYear+' '+s.dt}));
   }
   return r;
 }
