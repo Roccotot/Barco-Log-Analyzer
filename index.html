@@ -308,7 +308,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
     <img src="logo_sigra.png" alt="Sigra Film" class="brand-logo">
     <div class="brand-eyebrow">Sigra Film — Barco Cinema Projector</div>
     <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
-    <div class="brand-sub">DP2000 · DP2K · DP4K · Alchemy Series</div>
+    <div class="brand-sub">DP2000 · DP2K · DP4K · DP2K-S · Alchemy Series</div>
   </div>
   <div id="drop-zone">
     <div class="hud-corners"><span></span><span></span><span></span><span></span></div>
@@ -492,6 +492,12 @@ async function load(file){
       else if(/^parameters\.txt$/i.test(low))files.parameters=await zip.files[name].async('string');
       else if(/error_messages/i.test(low))   files.errorMsg=await zip.files[name].async('string');
       else if(/cinemafrontend/i.test(low))   files.cfeStatus=await zip.files[name].async('string');
+      else if(/lamphistorylog/i.test(low))   files.lampHistory=await zip.files[name].async('string');
+      else if(/lpslogfile/i.test(low))       files.lpsLog=await zip.files[name].async('string');
+      else if(/^temperatures\.txt$/i.test(low)) files.temperatures=await zip.files[name].async('string');
+      else if(/^voltages\.txt$/i.test(low))  files.voltages=await zip.files[name].async('string');
+      else if(/^speeds\.txt$/i.test(low))    files.speeds=await zip.files[name].async('string');
+      else if(/hardware_info/i.test(low))    files.hardwareInfo=await zip.files[name].async('string');
     }
     setProgress(40,'Parsing log…');await tick();
     const r=analyze(files);
@@ -514,10 +520,30 @@ function xmlAttr(xml,attr){
 function parseLines(txt){return txt?txt.replace(/\r/g,'').split('\n'):[]}
 
 function parseProjLine(line){
-  const m=/^(\d+)=(\w{3}\s+\d+\s+[\d:]+)\s+\w+\s+(\S+)\s+(\S+?)(?:\[\d+\])?:\s+(.+)$/.exec(line.trim());
+  // Supports both DP4K/DP2K (simple hostname) and Serie S (DP2K-10Sx-SERIAL with hyphens)
+  const m=/^(\d+)=(\w{3}\s+\d+\s+[\d:]+)\s+\S+\s+(\S+)\s+(\S+?)(?:\[\d+\])?:\s+(.+)$/.exec(line.trim());
   if(!m)return null;
   const fac=m[3];const parts=fac.split('.');
   return{idx:+m[1],dt:m[2].trim(),level:parts[1]||'info',proc:m[4].replace(/\[\d+\]/,''),msg:m[5].trim()};
+}
+
+function parseLampHistoryLine(line){
+  // Format: N=Mon DD HH:MM:SS YYYY hostname facility process[pid]: message
+  const m=/^(\d+)=(\w{3}\s+\d+\s+[\d:]+)\s+(\d{4})\s+\S+\s+\S+\s+\S+?(?:\[\d+\])?:\s+(.+)$/.exec(line.trim());
+  if(!m)return null;
+  return{idx:+m[1],dt:m[2].trim()+' '+m[3],msg:m[4].trim()};
+}
+
+function parseXmlItems(xml,tag){
+  if(!xml)return[];
+  const re=new RegExp('<'+tag+'([^>]*)/>','gi');const items=[];let mm;
+  while((mm=re.exec(xml))!==null){
+    const attrs={};
+    let am;const ar=/(\w+)="([^"]*)"/g;
+    while((am=ar.exec(mm[1]))!==null)attrs[am[1]]=am[2];
+    items.push(attrs);
+  }
+  return items;
 }
 
 // ══ ANALYZE ══
@@ -529,13 +555,14 @@ function analyze(files){
   const r={
     device:{},fw:{},cfe:{},lamp:{runtime:'—',desc:'—',article:'—'},
     critEvents:[],errEvents:[],warnEvents:[],
-    commEvents:[],lampSessions:[],
+    commEvents:[],lampSessions:[],lampHistory:[],
     bootCount:0,dowserFails:0,i2cTimeouts:0,lampCritOff:0,
-    lampOnFails:0,rtcFails:0,ntpIssues:0,
+    lampOnFails:0,rtcFails:0,ntpIssues:0,powerInterruptions:0,
     commWarnCount:0,commErrCount:0,
     allNames:files.allNames||[],
-    versionCats:[],
-    rawProjLines:[],rawCommLines:[]
+    versionCats:[],temps:[],voltages:[],fanSpeeds:[],
+    rawProjLines:[],rawCommLines:[],
+    isSerieS:false
   };
 
   // Parameters
@@ -610,24 +637,40 @@ function analyze(files){
   if(files.projLog){
     const lines=parseLines(files.projLog);
     r.rawProjLines=lines.filter(l=>l.trim()&&l!=='[LOG]');
+    // Detect Serie S by process name dp61
+    r.isSerieS=lines.some(l=>/\sdp61\[/.test(l));
     const lampOns=[],lampOffs=[];
     for(const line of lines){
       const p=parseProjLine(line);if(!p)continue;
-      if(p.msg.includes('starting application')&&p.proc==='dp80')r.bootCount++;
+      // Boot detection: dp80 (DP4K/classic) or dp61 (Serie S) starting, or syslogd restart
+      if((p.msg.includes('starting application')&&(p.proc==='dp80'||p.proc==='dp61'))||
+         (p.proc==='syslogd'&&p.msg.toLowerCase().includes('started')))r.bootCount++;
+      // Power interruption events (Serie S ipid daemon)
+      if(p.proc==='ipid'&&p.msg.toLowerCase().includes('power interruption'))r.powerInterruptions++;
       const lvl=p.level;const ml=p.msg.toLowerCase();
+      // Skip kernel boot noise (Jan 1 pre-NTP entries are not real errors)
+      const isBootNoise=p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond');
       if(lvl==='crit'||lvl==='emerg'){
-        r.critEvents.push(p);
+        if(!isBootNoise)r.critEvents.push(p);
         if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
       }else if(lvl==='err'||lvl==='error'){
-        r.errEvents.push(p);
+        if(!isBootNoise)r.errEvents.push(p);
         if(ml.includes('dowser')&&ml.includes('failed'))r.dowserFails++;
         if(ml.includes('i2c')&&ml.includes('timeout'))r.i2cTimeouts++;
         if(ml.includes('rtc time failed'))r.rtcFails++;
-      }else if(lvl==='warn'||lvl==='warning'){
+      }else if((lvl==='warn'||lvl==='warning')&&!isBootNoise){
         r.warnEvents.push(p);
       }
-      if(ml.includes('set lamp on')&&!ml.includes('already on')&&!ml.includes('failed')&&!ml.includes('interval'))lampOns.push(p);
-      if(ml.includes('set lamp off')&&!ml.includes('already off'))lampOffs.push(p);
+      // Lamp ON: classic "set lamp on" or Serie S "set light on"
+      const isLampOn=(ml.includes('set lamp on')||ml.includes('set light on'))&&!ml.includes('already on')&&!ml.includes('failed')&&!ml.includes('interval');
+      const isLampOff=(ml.includes('set lamp off')||ml.includes('set light off'))&&!ml.includes('already off');
+      if(isLampOn)lampOns.push(p);
+      if(isLampOff)lampOffs.push(p);
+    }
+    // Also detect boots via raw syslogd lines (Serie S reboots show before NTP sync)
+    if(r.isSerieS){
+      const syslogStarts=(files.projLog.match(/syslogd started/g)||[]).length;
+      if(syslogStarts>r.bootCount)r.bootCount=syslogStarts;
     }
     // Lamp sessions
     const usedOff=new Set();
@@ -662,6 +705,33 @@ function analyze(files){
       if(!r.device.cinema&&msg.includes('credentials')){const c=/"([^"]+)"/.exec(msg);if(c)r.device.cinema=c[1];}
     }
   }
+  // LampHistoryLogFile — lamp replacement history (Serie S)
+  if(files.lampHistory){
+    const lines=parseLines(files.lampHistory);
+    for(const line of lines){
+      const p=parseLampHistoryLine(line);if(!p)continue;
+      // Parse: article number=X, serial number=X, run time=X, strikes=X, reset count=X
+      const am=/article number=([^,]+)/.exec(p.msg);
+      const sm=/serial number=([^,]+)/.exec(p.msg);
+      const rm=/run time=([^,]+)/.exec(p.msg);
+      const stm=/strikes=([^,]+)/.exec(p.msg);
+      const rcm=/reset count=(\d+)/.exec(p.msg);
+      if(am)r.lampHistory.push({
+        dt:p.dt,idx:p.idx,
+        article:(am[1]||'').trim(),
+        serial:(sm?sm[1]:'').trim(),
+        runtime:(rm?rm[1]:'').trim(),
+        strikes:(stm?stm[1]:'').trim(),
+        resetCount:(rcm?rcm[1]:'').trim()
+      });
+    }
+  }
+
+  // Temperatures, Voltages, Fan Speeds (XML snapshot)
+  r.temps=parseXmlItems(files.temperatures,'temperature');
+  r.voltages=parseXmlItems(files.voltages,'voltage');
+  r.fanSpeeds=parseXmlItems(files.speeds,'fanspeed');
+
   // Arricchisci i timestamp del ProjectorLog con l'anno estratto dal CommLog
   if(logYear){
     const ey=e=>({...e,dt:logYear+' '+e.dt});
@@ -702,7 +772,7 @@ function renderOverview(r){
     {l:'Ore Lampada',v:r.lamp.runtime||'—',s:r.lamp.desc,cls:lh>1500?'kw':'ko'},
     {l:'Shutdown Critici',v:r.lampCritOff,s:'lamp switched off',cls:r.lampCritOff>0?'kc':'ko'},
     {l:'Dowser Falliti',v:r.dowserFails,s:'set dowser open failed',cls:r.dowserFails>3?'kc':r.dowserFails>0?'kor':'ko'},
-    {l:'i2c Timeout',v:r.i2cTimeouts,s:'bus busy errors',cls:r.i2cTimeouts>5?'kw':r.i2cTimeouts>0?'kor':'ko'},
+    {l:'Interruzioni Rete',v:r.powerInterruptions,s:'power interruption',cls:r.powerInterruptions>3?'kc':r.powerInterruptions>0?'kw':'ko'},
     {l:'Boot Registrati',v:r.bootCount,s:'riavvii nel log',cls:'ki'},
   ];
   const kpiHtml=`<div class="kpi-strip">${kpis.map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${esc(k.s||'')}</div></div>`).join('')}</div>`;
@@ -724,6 +794,8 @@ function buildAnalysis(r){
   if(r.rtcFails>0)items.push(['aw',`⚠ RTC Read Failed (${r.rtcFails}×)`,`Il Real Time Clock non è stato letto correttamente al boot. Possibile batteria RTC scarica.`]);
   if(r.lampOnFails>0)items.push(['aw',`⚠ Lamp ON Failed (${r.lampOnFails}× nel Communicator)`,`Tentativi falliti di accensione lampada. Verificare lamphouse, connettori e alimentatore.`]);
   if(r.ntpIssues>3)items.push(['ao',`ℹ NTP / Orologio (${r.ntpIssues}×)`,`L'orologio del proiettore si discosta dall'NTP. Verificare configurazione server NTP.`]);
+  if(r.powerInterruptions>3)items.push(['ac',`🔴 Interruzioni di corrente frequenti (${r.powerInterruptions}×)`,`Il log registra ${r.powerInterruptions} interruzioni di alimentazione. Spegnimenti improvvisi danneggiano la lampada e la meccanica. Verificare l'alimentazione e valutare un UPS.`]);
+  else if(r.powerInterruptions>0)items.push(['aw',`⚠ Interruzioni di corrente rilevate (${r.powerInterruptions}×)`,`Rilevate ${r.powerInterruptions} interruzioni di rete. Monitorare la stabilità dell'alimentazione.`]);
   if(r.device.cloKey&&r.device.cloKey.toLowerCase()==='not valid')items.push(['aw',`⚠ CLO Key non valida`,`Il proiettore opera senza Constant Light Output. La luminosità non viene compensata nel tempo.`]);
   const lh=parseInt(r.lamp.runtime)||0;
   if(lh>1500)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}`]);
@@ -780,7 +852,8 @@ function renderLamp(r){
       </div>
     </div>
   </div>
-  <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Timeline Sessioni Lampada</span><span class="ph-count">${r.lampSessions.length}</span></div><div class="pb">${sessHtml}</div></div>`;
+  <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Timeline Sessioni Lampada</span><span class="ph-count">${r.lampSessions.length}</span></div><div class="pb">${sessHtml}</div></div>
+  ${r.lampHistory.length?`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Storico Sostituzioni Lampada</span><span class="ph-count">${r.lampHistory.length} lampade</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Articolo</th><th class="sortable" onclick="sortTh(this)">Seriale</th><th class="sortable" onclick="sortTh(this)">Ore</th><th class="sortable" onclick="sortTh(this)">Strike</th></tr></thead><tbody>${r.lampHistory.map(l=>`<tr><td class="dt">${esc(l.dt)}</td><td class="hi">${esc(l.article)}</td><td>${esc(l.serial)}</td><td>${esc(l.runtime)}</td><td>${esc(l.strikes)}</td></tr>`).join('')}</tbody></table></div></div>`:''}`;
 }
 
 // ── Device ──
@@ -824,7 +897,15 @@ function renderDevice(r){
       </div>
     </div>
   </div>
-  <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>`;
+  <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>
+  ${r.temps.length||r.voltages.length||r.fanSpeeds.length?`<div class="sec-label" style="margin-top:20px;">Snapshot Hardware</div>
+  <div class="grid2">
+    ${r.temps.length?`<div class="panel"><div class="ph"><div class="dot d-ora"></div><span class="ph-title">Temperature</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sensore</th><th>Valore</th><th>Max</th><th>Stato</th></tr></thead><tbody>${r.temps.map(t=>{const ok=t.message==='ok';return`<tr><td>${esc(t.name||'')}</td><td class="${ok?'':'wa'}">${esc(t.value||'—')} ${esc(t.unit||'')}</td><td class="dt">${t.max||t.maxw||'—'}</td><td><span class="sev ${ok?'so':'sw'}">${(t.message||'—').toUpperCase()}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
+    ${r.fanSpeeds.length?`<div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Ventole (RPM)</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Ventola</th><th>RPM</th><th>Min</th><th>Stato</th></tr></thead><tbody>${r.fanSpeeds.map(f=>{const ok=f.message==='ok';const v=parseInt(f.value||0);return`<tr><td>${esc(f.name||'')}</td><td class="${ok?'':'wa'}">${esc(f.value||'—')}</td><td class="dt">${f.minw||f.min||'—'}</td><td><span class="sev ${ok?'so':'sw'}">${(f.message||'—').toUpperCase()}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
+  </div>
+  ${r.voltages.length?`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Tensioni &amp; Alimentazioni Fan</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Circuito</th><th>Valore</th><th>Min–Max</th><th>Stato</th></tr></thead><tbody>${r.voltages.map(v=>{const ok=v.message==='ok';return`<tr><td>${esc(v.name||'')}</td><td class="${ok?'':'wa'}">${esc(v.value||'—')} ${esc(v.unit||'')}</td><td class="dt">${v.minw||v.min||'—'} – ${v.maxw||v.max||'—'}</td><td><span class="sev ${ok?'so':'sw'}">${(v.message||'—').toUpperCase()}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
+  `:''}
+`;
 }
 
 // ── Communicator ──
