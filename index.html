@@ -102,6 +102,16 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .grid32{display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px}
 .g1{margin-bottom:16px}
 @media(max-width:760px){.grid2,.grid32{grid-template-columns:1fr}.content{padding:12px}.topbar{padding:10px 12px}}
+@media(max-width:760px){
+  #upload-screen{min-height:100dvh;padding:16px 16px;justify-content:center}
+  .brand{margin-bottom:20px}
+  .brand-logos{gap:20px;margin-bottom:12px}
+  .brand-logo-sigra,.brand-logo-barco{height:44px}
+  .brand-title{font-size:clamp(28px,8vw,48px)}
+  .brand-sub{font-size:10px;margin-top:8px}
+  .brand-made{margin-top:10px}
+  #drop-zone{padding:28px 20px 24px}
+}
 
 /* ── PANEL ── */
 .panel{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:0}
