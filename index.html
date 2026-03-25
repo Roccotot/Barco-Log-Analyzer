@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="theme-color" content="#080b10">
 <title>Barco Log Analyzer</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.svg">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap');
 
@@ -39,7 +41,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .brand-title{font-weight:900;font-size:clamp(44px,10vw,80px);text-transform:uppercase;line-height:.95;color:var(--white)}
 .brand-title em{font-style:normal;color:var(--accent);display:block;font-weight:300;font-size:.45em;letter-spacing:8px;margin-top:8px}
 .brand-sub{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);margin-top:14px}
-.brand-logo{height:48px;width:auto;margin-bottom:18px;opacity:.92;filter:brightness(1.1)}
+.brand-logo{height:90px;width:auto;opacity:.95;margin-bottom:20px}
+.brand-made{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--muted);margin-top:18px;opacity:.6}
 #drop-zone{width:100%;max-width:520px;border:2px dashed var(--border2);border-radius:var(--r);padding:52px 32px 40px;text-align:center;cursor:pointer;background:rgba(13,17,25,.7);transition:all .22s ease;animation:fadeUp .7s .12s ease both;position:relative}
 #drop-zone:hover,#drop-zone.over{border-color:var(--accent);background:rgba(0,200,240,.04);box-shadow:0 0 48px rgba(0,200,240,.08)}
 #drop-zone.over{transform:scale(1.015)}
@@ -305,10 +308,11 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
   <div class="proj-beam"></div>
   <div class="grid-bg"></div>
   <div class="brand">
-    <img src="logo_sigra.png" alt="Sigra Film" class="brand-logo">
+    <img src="logo_combined.svg" alt="Sigra Film × Barco" class="brand-logo">
     <div class="brand-eyebrow">Sigra Film — Barco Cinema Projector</div>
     <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
     <div class="brand-sub">DP2000 · DP2K · DP4K · DP2K-S · Alchemy Series</div>
+    <div class="brand-made">fatto da Rocco Totaro</div>
   </div>
   <div id="drop-zone">
     <div class="hud-corners"><span></span><span></span><span></span><span></span></div>
@@ -335,7 +339,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <div id="results-screen">
   <div class="topbar">
     <div class="tb-logo">
-      <img src="logo_sigra.png" alt="Sigra Film">
+      <img src="logo_combined.svg" alt="Sigra Film × Barco">
       <div class="tb-logo-text">Barco Cinema<strong id="tb-model">—</strong></div>
     </div>
     <div class="tb-badges">
@@ -498,6 +502,10 @@ async function load(file){
       else if(/^voltages\.txt$/i.test(low))  files.voltages=await zip.files[name].async('string');
       else if(/^speeds\.txt$/i.test(low))    files.speeds=await zip.files[name].async('string');
       else if(/hardware_info/i.test(low))    files.hardwareInfo=await zip.files[name].async('string');
+      else if(/icmpraidsinfo|icmpraidinfo/i.test(low)) files.icmpRaid=await zip.files[name].async('string');
+      else if(/icmpsyslog/i.test(low))       files.icmpSyslog=await zip.files[name].async('string');
+      else if(/^runtimes\.txt$/i.test(low))  files.runtimes=await zip.files[name].async('string');
+      else if(/cinemafrontendlog/i.test(low)&&!/upgrade|status/i.test(low)) files.cfeLog=await zip.files[name].async('string');
     }
     setProgress(40,'Parsing log…');await tick();
     const r=analyze(files);
@@ -534,6 +542,15 @@ function parseLampHistoryLine(line){
   return{idx:+m[1],dt:m[2].trim()+' '+m[3],msg:m[4].trim()};
 }
 
+function parseDP3000Line(line){
+  // Format: N=YYYYMMDDHHMMSS - file.cpp - Function - message
+  const m=/^(\d+)=(\d{14})\s+-\s+\S+\s+-\s+\S+\s+-\s+(.+)$/.exec(line.trim());
+  if(!m)return null;
+  const ts=m[2];
+  const dt=`${ts.slice(0,4)}-${ts.slice(4,6)}-${ts.slice(6,8)} ${ts.slice(8,10)}:${ts.slice(10,12)}:${ts.slice(12,14)}`;
+  return{idx:+m[1],dt,level:'info',proc:'dp3000',msg:m[3].trim()};
+}
+
 function parseXmlItems(xml,tag){
   if(!xml)return[];
   const re=new RegExp('<'+tag+'([^>]*)/>','gi');const items=[];let mm;
@@ -553,16 +570,20 @@ function analyze(files){
   const logYear=logYearM?logYearM[1]:null;
 
   const r={
-    device:{},fw:{},cfe:{},lamp:{runtime:'—',desc:'—',article:'—'},
+    device:{},fw:{},cfe:{},
+    lamp:{runtime:'—',desc:'—',article:'—'},
+    lamp2:null,// dual lamp (Serie E)
     critEvents:[],errEvents:[],warnEvents:[],
     commEvents:[],lampSessions:[],lampHistory:[],
+    activeErrors:[],// parsed Error_messages.txt
     bootCount:0,dowserFails:0,i2cTimeouts:0,lampCritOff:0,
     lampOnFails:0,rtcFails:0,ntpIssues:0,powerInterruptions:0,
     commWarnCount:0,commErrCount:0,
     allNames:files.allNames||[],
     versionCats:[],temps:[],voltages:[],fanSpeeds:[],
+    raidStatus:null,laserHours:null,
     rawProjLines:[],rawCommLines:[],
-    isSerieS:false
+    isSerieS:false,isDP3000:false,isLaser:false
   };
 
   // Parameters
@@ -580,12 +601,23 @@ function analyze(files){
     r.device.lensKey=xmlAttr(p,'Lens_memory')||'—';
     r.device.snmp=xmlAttr(p,'SNMP')||'—';
     r.device.commVer=xmlAttr(p,'Version')||'—';
-    const lb=/<Lamp([^>]*)>/i.exec(p);
+    r.device.mediablock=xmlAttr(p,'type')||'—';// from <Mediablock type="..."/>
+    const lb=/<Lamp1?([^>]*)>/i.exec(p);// matches <Lamp> or <Lamp1>
     if(lb){
       const mr=/runtime="(\d+)"/i.exec(lb[0]);if(mr)r.lamp.runtime=mr[1];
       const md=/description="([^"]+)"/i.exec(lb[0]);if(md)r.lamp.desc=md[1].replace(/&quot;/g,'"');
       const ma=/article_number="([^"]+)"/i.exec(lb[0]);if(ma)r.lamp.article=ma[1];
+      const ms=/serial_number="([^"]+)"/i.exec(lb[0]);if(ms)r.lamp.serial=ms[1];
     }
+    // Dual lamp (Serie E DP2K-6E etc.)
+    const lb2=/<Lamp2([^>]*)>/i.exec(p);
+    if(lb2){
+      r.lamp2={runtime:'—',desc:'—',article:'—'};
+      const mr=/runtime="(\d+)"/i.exec(lb2[0]);if(mr)r.lamp2.runtime=mr[1];
+      const md=/description="([^"]+)"/i.exec(lb2[0]);if(md)r.lamp2.desc=md[1].replace(/&quot;/g,'"');
+      const ma=/article_number="([^"]+)"/i.exec(lb2[0]);if(ma)r.lamp2.article=ma[1];
+    }
+    r.isLaser=!lb&&/icmp|laser|lls/i.test(r.device.mediablock||'');
     const lens=/<Lens([^>]*)>/i.exec(p);
     if(lens){const m=/description="([^"]+)"/i.exec(lens[0]);r.device.lens=m?m[1].replace(/&quot;/g,'"'):'—';}
     else r.device.lens='—';
@@ -614,38 +646,82 @@ function analyze(files){
     }
   }
 
-  // CFE Status
+  // CFE Status — two formats:
+  // Old (DP3000/DP4K): "System status not OK" / "Interface board ARM OK"
+  // New (Serie B/C/E): "Link decryptor system status: Ok" / "ICP System status: Ok"
   if(files.cfeStatus){
     const s=files.cfeStatus;
     const ok=k=>s.toLowerCase().includes(k.toLowerCase());
-    r.cfe.system=ok('system status ok')?'OK':ok('system status')?'FAULT':'—';
-    r.cfe.selfTest=ok('self test ok')?'OK':ok('self test')?'FAULT':'—';
-    r.cfe.ifaceArm=ok('interface board arm ok')?'OK':ok('interface board arm')?'FAULT':'—';
-    r.cfe.ifaceFpga=ok('interface board fpga ok')?'OK':ok('interface board fpga')?'FAULT':'—';
-    r.cfe.dsp=ok('processor board dsp ok')?'OK':ok('processor board dsp')?'FAULT':'—';
-    r.cfe.procFpga=ok('processor board fpga ok')?'OK':ok('processor board fpga')?'FAULT':'—';
-    r.cfe.enclosure=ok('security enclosure not present')?'NOT PRESENT':ok('security enclosure ok')?'OK':'—';
+    const isNewFormat=ok('link decryptor')||ok('icp system status');
+    if(isNewFormat){
+      // New ICP/TI format
+      const parseStatus=(label)=>{
+        const re=new RegExp(label+'[^:]*:\\s*(\\S+)','i');
+        const m=re.exec(s);
+        if(!m)return'—';
+        const v=m[1].toLowerCase();
+        return v==='ok'?'OK':(v==='not'||v.startsWith('not'))?'FAULT':m[1];
+      };
+      r.cfe.format='ICP';
+      r.cfe.linkDecryptor=parseStatus('link decryptor system status');
+      r.cfe.linkSelfTest=parseStatus('link decryptor self test');
+      r.cfe.marriage=ok('marriage status: not ok')?'NOT OK':ok('marriage status: ok')?'OK':'—';
+      r.cfe.icpSystem=parseStatus('ICP system status');
+      r.cfe.icpSelfTest=parseStatus('ICP self test status');
+      r.cfe.icpFmt=parseStatus('ICP FMT operation');
+      // Formatter board
+      r.cfe.formatter=ok('formatter board - nok')?'NOK':ok('formatter board - ok')?'OK':'—';
+      r.cfe.system=r.cfe.icpSystem==='OK'&&r.cfe.linkDecryptor==='OK'?'OK':'FAULT';
+    }else{
+      // Old format
+      r.cfe.format='classic';
+      r.cfe.system=ok('system status ok')?'OK':ok('system status')?'FAULT':'—';
+      r.cfe.selfTest=ok('self test ok')?'OK':ok('self test')?'FAULT':'—';
+      r.cfe.ifaceArm=ok('interface board arm ok')?'OK':ok('interface board arm')?'FAULT':'—';
+      r.cfe.ifaceFpga=ok('interface board fpga ok')?'OK':ok('interface board fpga')?'FAULT':'—';
+      r.cfe.dsp=ok('processor board dsp ok')?'OK':ok('processor board dsp')?'FAULT':'—';
+      r.cfe.procFpga=ok('processor board fpga ok')?'OK':ok('processor board fpga')?'FAULT':'—';
+      r.cfe.enclosure=ok('security enclosure not present')?'NOT PRESENT':ok('security enclosure ok')?'OK':'—';
+      r.cfe.formatter=ok('formatter board - nok')?'NOK':ok('formatter board')?'OK':'—';
+    }
     r.cfe.td3=ok('3d status')?(ok('enabled')?'ENABLED':'DISABLED'):'—';
-    r.cfe.encrypt=(()=>{const m=/link encryption(\S+)/i.exec(s);return m&&m[1]?m[1]:'NONE';})();
+    r.cfe.encrypt=(()=>{const m=/link encryption\s*(\S+)/i.exec(s);return m&&m[1]&&m[1].toLowerCase()!=='status'?m[1]:'NONE';})();
     r.cfe.raw=s.trim();
   }
 
-  // Error messages file
-  r.hasActiveErrors=files.errorMsg&&!/no error/i.test(files.errorMsg);
+  // Error messages file — two formats:
+  // Old: plain text "ti - system status = fail"
+  // New: tab-separated "E\t5834\tti-link-decryptor - physical marriage tamper event"
+  if(files.errorMsg&&files.errorMsg.trim()&&!/^\s*$/.test(files.errorMsg)){
+    const elines=parseLines(files.errorMsg).filter(l=>l.trim());
+    for(const el of elines){
+      const tm=/^([EWN])\t(\d+)\t(.+)$/.exec(el.trim());
+      if(tm){
+        const sev=tm[1]==='E'?'ERROR':tm[1]==='W'?'WARN':'INFO';
+        r.activeErrors.push({sev,code:tm[2],msg:tm[3].trim()});
+      }else if(el.trim()&&!/no active errors|no error/i.test(el)){
+        r.activeErrors.push({sev:'ERROR',code:'',msg:el.trim()});
+      }
+    }
+  }
+  r.hasActiveErrors=r.activeErrors.length>0;
 
   // ProjectorLog
   if(files.projLog){
     const lines=parseLines(files.projLog);
     r.rawProjLines=lines.filter(l=>l.trim()&&l!=='[LOG]');
-    // Detect Serie S by process name dp61
+    // Detect model family
     r.isSerieS=lines.some(l=>/\sdp61\[/.test(l));
+    r.isDP3000=!r.isSerieS&&lines.some(l=>/^\d+=\d{14}\s+-/.test(l.trim()));
     const lampOns=[],lampOffs=[];
     for(const line of lines){
-      const p=parseProjLine(line);if(!p)continue;
-      // Boot detection: dp80 (DP4K/classic) or dp61 (Serie S) starting, or syslogd restart
-      if((p.msg.includes('starting application')&&(p.proc==='dp80'||p.proc==='dp61'))||
+      // DP3000 uses a completely different log format
+      const p=r.isDP3000?parseDP3000Line(line):parseProjLine(line);
+      if(!p)continue;
+      // Boot detection: dp80/dp60 (C/B series), dp61 (S/E/SLP series), or syslogd restart
+      if((p.msg.includes('starting application')&&/^dp(80|61|60)$/.test(p.proc))||
          (p.proc==='syslogd'&&p.msg.toLowerCase().includes('started')))r.bootCount++;
-      // Power interruption events (Serie S ipid daemon)
+      // Power interruption events (Serie S/E ipid daemon)
       if(p.proc==='ipid'&&p.msg.toLowerCase().includes('power interruption'))r.powerInterruptions++;
       const lvl=p.level;const ml=p.msg.toLowerCase();
       // Skip kernel boot noise (Jan 1 pre-NTP entries are not real errors)
@@ -732,6 +808,21 @@ function analyze(files){
   r.voltages=parseXmlItems(files.voltages,'voltage');
   r.fanSpeeds=parseXmlItems(files.speeds,'fanspeed');
 
+  // ICMP RAID Status (Serie E / SLP with integrated media player)
+  if(files.icmpRaid){
+    const rm=/state="([^"]+)"/.exec(files.icmpRaid);
+    const re=/error="([^"]+)"/.exec(files.icmpRaid);
+    const hdds=parseXmlItems(files.icmpRaid,'HDD');
+    r.raidStatus={state:rm?rm[1]:'unknown',error:re?re[1]:'',hdds};
+  }
+
+  // Runtimes.txt (Laser projectors — DP2K-SLP etc.)
+  if(files.runtimes){
+    const lsm=/<runtime[^>]*name="light on"[^>]*value="(\d+)"/i.exec(files.runtimes);
+    const ttm=/<runtime[^>]*name="total"[^>]*value="(\d+)"/i.exec(files.runtimes);
+    if(lsm||ttm)r.laserHours={lightOn:lsm?+lsm[1]:null,total:ttm?+ttm[1]:null};
+  }
+
   // Arricchisci i timestamp del ProjectorLog con l'anno estratto dal CommLog
   if(logYear){
     const ey=e=>({...e,dt:logYear+' '+e.dt});
@@ -799,9 +890,23 @@ function buildAnalysis(r){
   if(r.device.cloKey&&r.device.cloKey.toLowerCase()==='not valid')items.push(['aw',`⚠ CLO Key non valida`,`Il proiettore opera senza Constant Light Output. La luminosità non viene compensata nel tempo.`]);
   const lh=parseInt(r.lamp.runtime)||0;
   if(lh>1500)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}`]);
-  const cfeFault=Object.values(r.cfe).some(v=>v==='FAULT');
-  if(cfeFault)items.push(['ac',`🔴 CRITICO — Cinema Front End: componente in FAULT`,`Uno o più componenti CFE risultano in stato FAULT. Verificare subito.`]);
-  else if(r.cfe.system==='OK'&&r.critEvents.length===0&&r.errEvents.length===0)items.push(['ag',`✅ CFE OK — Nessun errore rilevato`,`Cinema Front End operativo. Tutti i componenti rispondono correttamente.`]);
+  // Active errors from Error_messages.txt
+  const activeErr=r.activeErrors.filter(e=>e.sev==='ERROR');
+  const activeWarn=r.activeErrors.filter(e=>e.sev==='WARN');
+  if(activeErr.length)items.push(['ac',`🔴 ATTIVI — ${activeErr.length} errore/i presenti`,activeErr.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
+  else if(activeWarn.length)items.push(['aw',`⚠ Warning attivi — ${activeWarn.length}`,activeWarn.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
+  // RAID status (ICMP)
+  if(r.raidStatus){
+    const badHdd=r.raidStatus.hdds.filter(h=>h.error&&h.error!=='None'&&h.available==='No');
+    if(r.raidStatus.state&&r.raidStatus.state.toLowerCase()!=='online'||badHdd.length)
+      items.push(['ac',`🔴 CRITICO — RAID ICMP: ${r.raidStatus.state||'unknown'}`,`${badHdd.length} disco/i in errore. Verificare subito l'integrità del RAID.`]);
+    else items.push(['ag',`✅ RAID ICMP Online`,`${r.raidStatus.hdds.length} dischi operativi.`]);
+  }
+  // CFE / ICP status
+  const cfeFault=Object.values(r.cfe).some(v=>v==='FAULT'||v==='NOT OK'||v==='NOK');
+  if(cfeFault)items.push(['ac',`🔴 CRITICO — Cinema Front End: componente in FAULT`,`Uno o più componenti CFE/ICP risultano in stato FAULT. Verificare subito.`]);
+  else if(r.cfe.marriage&&r.cfe.marriage!=='OK'&&r.cfe.marriage!=='—')items.push(['aw',`⚠ ICP Marriage non valido`,`Lo stato di marriage del Link Decryptor non è OK. Potrebbe essere necessario rifarlo.`]);
+  else if(r.cfe.system==='OK'&&r.critEvents.length===0&&r.errEvents.length===0&&!activeErr.length)items.push(['ag',`✅ CFE/ICP OK — Nessun errore rilevato`,`Cinema Front End operativo. Tutti i componenti rispondono correttamente.`]);
   if(!items.length)items.push(['ag',`✅ Log pulito`,`Nessuna anomalia rilevante trovata in questo diagnostics package.`]);
   return items.map(([cls,t,b])=>`<div class="acard ${cls}"><strong>${esc(t)}</strong>${esc(b)}</div>`).join('');
 }
@@ -824,25 +929,34 @@ function brow(label,count,max,grad){const p=max>0?Math.round(count/max*100):0;re
 
 // ── Lamp ──
 function renderLamp(r){
-  const lh=parseInt(r.lamp.runtime)||0;
-  const pct=Math.min(100,Math.round(lh/2000*100));
-  const lc=lh>1500?'var(--crit)':lh>1000?'var(--yellow)':'var(--green)';
-  const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/600*100)):4;return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${s.dur?s.dur+'min':s.crit?'ABORT':'…'}</span>${s.crit?'<span class="lr-note">⚡ CRIT</span>':'<span class="lr-note"></span>'}</div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata</div>`;
-  $('tab-lamp').innerHTML=`
-  <div class="grid2">
-    <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Stato Lampada</span></div>
+  function lampCard(lamp,label){
+    const lh=parseInt(lamp.runtime)||0;
+    const pct=Math.min(100,Math.round(lh/2000*100));
+    const lc=lh>1500?'var(--crit)':lh>1000?'var(--yellow)':'var(--green)';
+    return`<div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">${label}</span></div>
       <div class="ig">
-        <div class="ic"><div class="ik">Descrizione</div><div class="iv">${esc(r.lamp.desc)}</div></div>
-        <div class="ic"><div class="ik">Codice Articolo</div><div class="iv">${esc(r.lamp.article)}</div></div>
-        <div class="ic"><div class="ik">Ore Attuali</div><div class="iv ${lh>1500?'wa':''}">${r.lamp.runtime}h</div></div>
-        <div class="ic"><div class="ik">Vita Stimata</div><div class="iv">~2000h</div></div>
+        <div class="ic"><div class="ik">Descrizione</div><div class="iv">${esc(lamp.desc)}</div></div>
+        <div class="ic"><div class="ik">Codice Articolo</div><div class="iv">${esc(lamp.article)}</div></div>
+        <div class="ic"><div class="ik">Ore Attuali</div><div class="iv ${lh>1500?'wa':''}">${lamp.runtime}h</div></div>
+        <div class="ic"><div class="ik">Seriale</div><div class="iv">${esc(lamp.serial||'—')}</div></div>
       </div>
       <div class="pb" style="padding-top:8px;">
         <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:1px;">UTILIZZO STIMATO ${pct}%</div>
         <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${lc};border-radius:4px;transition:width 1s ease;"></div></div>
         <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px;">${lh}h / 2000h</div>
       </div>
-    </div>
+    </div>`;
+  }
+  const laserHtml=r.laserHours?`<div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Sorgente Laser (LLS)</span></div>
+    <div class="ig">
+      <div class="ic"><div class="ik">Ore Luce ON</div><div class="iv">${r.laserHours.lightOn??'—'}h</div></div>
+      <div class="ic"><div class="ik">Ore Totali</div><div class="iv">${r.laserHours.total??'—'}h</div></div>
+    </div></div>`:'';
+  const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/600*100)):4;return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${s.dur?s.dur+'min':s.crit?'ABORT':'…'}</span>${s.crit?'<span class="lr-note">⚡ CRIT</span>':'<span class="lr-note"></span>'}</div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata nel ProjectorLog</div>`;
+  $('tab-lamp').innerHTML=`
+  ${laserHtml}
+  <div class="${r.lamp2?'grid2':'grid2'}">
+    ${r.isLaser?'':`${lampCard(r.lamp,'Lampada'+(r.lamp2?' 1':''))}${r.lamp2?lampCard(r.lamp2,'Lampada 2'):''}`}
     <div class="panel"><div class="ph"><div class="dot ${r.lampCritOff>0?'d-red':'d-yel'}"></div><span class="ph-title">Statistiche</span></div>
       <div class="ig">
         <div class="ic"><div class="ik">Shutdown Critici</div><div class="iv ${r.lampCritOff>0?'er':''}">${r.lampCritOff}</div></div>
@@ -882,8 +996,16 @@ function renderDevice(r){
         <div class="ic"><div class="ik">CFE IP</div>${iv(d.cfeIp)}</div>
       </div>
     </div>
-    <div class="panel"><div class="ph"><div class="dot ${cfeOk?'d-green':'d-red'}"></div><span class="ph-title">Cinema Front End</span></div>
+    <div class="panel"><div class="ph"><div class="dot ${cfeOk?'d-green':'d-red'}"></div><span class="ph-title">Cinema Front End${cf.format==='ICP'?' — ICP/TI':''}</span></div>
       <div class="ig">
+        ${cf.format==='ICP'?`
+        <div class="ic"><div class="ik">Link Decryptor</div>${iv(cf.linkDecryptor,'OK')}</div>
+        <div class="ic"><div class="ik">Link Self Test</div>${iv(cf.linkSelfTest,'OK')}</div>
+        <div class="ic"><div class="ik">Marriage</div>${iv(cf.marriage,'OK')}</div>
+        <div class="ic"><div class="ik">ICP System</div>${iv(cf.icpSystem,'OK')}</div>
+        <div class="ic"><div class="ik">ICP Self Test</div>${iv(cf.icpSelfTest,'OK')}</div>
+        <div class="ic"><div class="ik">ICP FMT Mode</div>${iv(cf.icpFmt,'Ok')}</div>
+        `:`
         <div class="ic"><div class="ik">System Status</div>${iv(cf.system,'OK')}</div>
         <div class="ic"><div class="ik">Self Test</div>${iv(cf.selfTest,'OK')}</div>
         <div class="ic"><div class="ik">Interface ARM</div>${iv(cf.ifaceArm,'OK')}</div>
@@ -891,11 +1013,16 @@ function renderDevice(r){
         <div class="ic"><div class="ik">Processor DSP</div>${iv(cf.dsp,'OK')}</div>
         <div class="ic"><div class="ik">Processor FPGA</div>${iv(cf.procFpga,'OK')}</div>
         <div class="ic"><div class="ik">Security Encl.</div>${iv(cf.enclosure,'OK','NOT PRESENT')}</div>
+        `}
+        ${cf.formatter&&cf.formatter!=='—'?`<div class="ic"><div class="ik">Formatter Board</div>${iv(cf.formatter,'OK','NOK')}</div>`:''}
         <div class="ic"><div class="ik">Link Encryption</div>${iv(cf.encrypt)}</div>
         <div class="ic"><div class="ik">3D License</div>${iv(cf.td3,'ENABLED','DISABLED')}</div>
         <div class="ic"><div class="ik">3D Expiry</div>${iv(d.td3Exp)}</div>
       </div>
     </div>
+  </div>
+  ${r.activeErrors.length?`<div class="panel g1"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Errori Attivi — Error_messages.txt</span><span class="ph-count">${r.activeErrors.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Codice</th><th>Messaggio</th></tr></thead><tbody>${r.activeErrors.map(e=>`<tr><td><span class="sev ${e.sev==='ERROR'?'se':e.sev==='WARN'?'sw':'si'}">${e.sev}</span></td><td class="dt">${esc(e.code)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
+  ${r.raidStatus?`<div class="panel g1"><div class="ph"><div class="dot ${r.raidStatus.state&&r.raidStatus.state.toLowerCase()==='online'?'d-green':'d-red'}"></div><span class="ph-title">RAID ICMP — ${esc(r.raidStatus.state||'unknown')}</span><span class="ph-count">${r.raidStatus.hdds.length} HDD</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Porta</th><th>Modello</th><th>Seriale</th><th>Dimensione</th><th>Stato</th></tr></thead><tbody>${r.raidStatus.hdds.map(h=>{const ok=h.error==='None'&&h.available==='Yes';return`<tr><td class="dt">${esc(h.port)}</td><td>${esc(h.model||'—')}</td><td class="dt">${esc(h.serial||'—')}</td><td class="dt">${esc(h.size?h.size+' GB':'—')}</td><td><span class="sev ${ok?'so':'se'}">${ok?'OK':esc(h.error||'ERROR')}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
   </div>
   <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>
   ${r.temps.length||r.voltages.length||r.fanSpeeds.length?`<div class="sec-label" style="margin-top:20px;">Snapshot Hardware</div>

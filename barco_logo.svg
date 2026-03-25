@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <!-- Red top section -->
+  <rect width="400" height="240" fill="#D81618"/>
+  <!-- Gray bottom section -->
+  <rect y="240" width="400" height="160" fill="#7A8088"/>
+  <!-- BARCO text -->
+  <text x="200" y="155" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="88" fill="white" text-anchor="middle" letter-spacing="-2">BARCO</text>
+  <!-- Barco symbol: circle with pipe on right -->
+  <g transform="translate(200,55)">
+    <!-- Horizontal bar (the "pipe") -->
+    <rect x="-68" y="-7" width="136" height="14" rx="7" fill="white"/>
+    <!-- Circle in center -->
+    <circle cx="0" cy="0" r="20" fill="white"/>
+    <circle cx="0" cy="0" r="11" fill="#D81618"/>
+    <!-- Right cap -->
+    <circle cx="68" cy="0" r="14" fill="white"/>
+    <circle cx="68" cy="0" r="7" fill="#D81618"/>
+  </g>
+  <!-- Visibly yours text -->
+  <text x="200" y="335" font-family="Arial, sans-serif" font-size="36" fill="white" text-anchor="middle" font-style="italic">Visibly yours</text>
+</svg>

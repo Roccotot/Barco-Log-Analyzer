@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="rb" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#ff2200"/>
+      <stop offset="50%"  stop-color="#22cc00"/>
+      <stop offset="100%" stop-color="#0044ff"/>
+    </linearGradient>
+    <clipPath id="c">
+      <rect width="64" height="64" rx="11"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#c)">
+    <!-- Top half white — Sigra style -->
+    <rect width="64" height="32" fill="white"/>
+    <!-- Bottom half red — Barco style -->
+    <rect y="32" width="64" height="32" fill="#D81618"/>
+
+    <!-- SF text top — rainbow -->
+    <text x="32" y="26"
+      font-family="Arial Black,Arial,sans-serif"
+      font-weight="900" font-size="22"
+      fill="url(#rb)" text-anchor="middle">SF</text>
+
+    <!-- Barco circle-pipe symbol — white, bottom half -->
+    <g transform="translate(32,46)" fill="white">
+      <rect x="-22" y="-4" width="44" height="8" rx="4"/>
+      <circle cx="0"  cy="0" r="8"/>
+      <circle cx="0"  cy="0" r="4" fill="#D81618"/>
+      <circle cx="22" cy="0" r="5"/>
+      <circle cx="22" cy="0" r="2.5" fill="#D81618"/>
+    </g>
+  </g>
+
+  <!-- Rainbow border -->
+  <rect x="2" y="2" width="60" height="60" rx="10"
+    fill="none" stroke="url(#rb)" stroke-width="3"/>
+</svg>
