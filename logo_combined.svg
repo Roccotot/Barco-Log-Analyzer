@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <defs>
+    <linearGradient id="rb" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#ee1100"/>
+      <stop offset="20%"  stop-color="#ff7700"/>
+      <stop offset="42%"  stop-color="#22cc00"/>
+      <stop offset="65%"  stop-color="#0044ff"/>
+      <stop offset="83%"  stop-color="#7700cc"/>
+      <stop offset="100%" stop-color="#ee1100"/>
+    </linearGradient>
+    <linearGradient id="rb2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#ff2200"/>
+      <stop offset="50%"  stop-color="#00bb33"/>
+      <stop offset="100%" stop-color="#0033ff"/>
+    </linearGradient>
+    <clipPath id="clip">
+      <rect width="500" height="500" rx="38"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#clip)">
+    <!-- White top section — Sigra Film style -->
+    <rect width="500" height="270" fill="white"/>
+    <!-- Red section — Barco style -->
+    <rect y="270" width="500" height="150" fill="#D81618"/>
+    <!-- Grey footer — Barco style -->
+    <rect y="420" width="500" height="80" fill="#767B82"/>
+
+    <!-- SIGRA text — rainbow bold -->
+    <text x="250" y="158"
+      font-family="Arial Black,Arial,sans-serif"
+      font-weight="900" font-size="128"
+      fill="url(#rb)" text-anchor="middle">SIGRA</text>
+
+    <!-- FILM text — rainbow italic -->
+    <text x="250" y="250"
+      font-family="Arial,sans-serif"
+      font-size="66" fill="url(#rb2)"
+      text-anchor="middle" font-style="italic" font-weight="bold">FILM</text>
+
+    <!-- Barco circle-pipe symbol (white, centered in red zone) -->
+    <g transform="translate(250,318)" fill="white">
+      <rect x="-96" y="-7" width="192" height="14" rx="7"/>
+      <circle cx="0"  cy="0" r="24"/>
+      <circle cx="0"  cy="0" r="13" fill="#D81618"/>
+      <circle cx="96" cy="0" r="15"/>
+      <circle cx="96" cy="0" r="7"  fill="#D81618"/>
+    </g>
+
+    <!-- BARCO text — white bold -->
+    <text x="250" y="408"
+      font-family="Arial Black,Arial,sans-serif"
+      font-weight="900" font-size="82"
+      fill="white" text-anchor="middle">BARCO</text>
+
+    <!-- Visibly yours — grey footer -->
+    <text x="250" y="473"
+      font-family="Arial,sans-serif"
+      font-size="34" fill="white"
+      text-anchor="middle" font-style="italic">Visibly yours</text>
+  </g>
+
+  <!-- Rainbow border (like Sigra Film logo) -->
+  <rect x="7" y="7" width="486" height="486" rx="33"
+    fill="none" stroke="url(#rb)" stroke-width="14"/>
+</svg>
