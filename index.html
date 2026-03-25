@@ -313,6 +313,23 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .pulse-rings>div:nth-child(2){animation-delay:1s}
 .pulse-rings>div:nth-child(3){animation-delay:2s}
 @keyframes ring-out{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.14);opacity:0}}
+
+/* ── PRINT / PDF EXPORT ── */
+.print-tab-header{display:none}
+@media print{
+  :root{--bg:#fff;--s1:#f4f6f8;--s2:#edf0f3;--border:#ccc;--border2:#bbb;--text:#222;--muted:#666;--white:#111;--accent:#007ea0}
+  body{background:#fff}
+  #upload-screen,#progress-screen,.topbar,.tabs,#pcv,.proj-beam,.grid-bg{display:none!important}
+  #results-screen{display:block!important}
+  .content{padding:0}
+  .tab-pane{display:block!important;page-break-before:always}
+  .tab-pane:first-of-type{page-break-before:auto}
+  .scroll-wrap{max-height:none!important;overflow:visible!important}
+  .panel{break-inside:avoid;background:#fff;border:1px solid #ccc}
+  .ph{background:#f4f6f8;border-bottom:1px solid #ccc}
+  .kpi-card{background:#f4f6f8;border:1px solid #ccc}
+  .print-tab-header{display:block;font-family:var(--sans);font-size:20px;font-weight:700;color:#111;padding:10px 0 6px;border-bottom:2px solid #333;margin-bottom:14px;letter-spacing:1px}
+}
 </style>
 </head>
 <body>
@@ -364,6 +381,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
       <span class="badge b-blue" id="tb-serial"></span>
       <span class="badge b-blue" id="tb-ip"></span>
       <span class="badge" id="tb-status"></span>
+      <button class="reset-btn" onclick="exportPDF()" style="border-color:var(--accent);color:var(--accent)">↓ Export PDF</button>
       <button class="reset-btn" onclick="appReset()">← Nuovo file</button>
     </div>
   </div>
@@ -484,6 +502,22 @@ function showScreen(id){
   });
 }
 function appReset(){$('file-input').value='';showScreen('upload-screen')}
+function exportPDF(){
+  const labels={'tab-overview':'Overview','tab-errors':'Errori','tab-lamp':'Lampada','tab-device':'Dispositivo','tab-communicator':'Communicator','tab-raw':'Log Raw'};
+  const model=$('tb-model').textContent.trim();
+  const serial=$('tb-serial').textContent.trim();
+  const prev=document.title;
+  document.title='Barco Log Analyzer'+(model&&model!=='—'?' — '+model:'')+(serial?' ('+serial+')':'');
+  const headers=[];
+  Object.entries(labels).forEach(([id,label])=>{
+    const pane=$(id);if(!pane)return;
+    const h=document.createElement('div');h.className='print-tab-header';h.textContent=label;
+    pane.prepend(h);headers.push(h);
+  });
+  window.print();
+  headers.forEach(h=>h.remove());
+  document.title=prev;
+}
 const tick=()=>new Promise(r=>setTimeout(r,30));
 
 $('tabs').addEventListener('click',e=>{
