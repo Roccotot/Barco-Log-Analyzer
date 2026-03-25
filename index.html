@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="theme-color" content="#080b10">
 <title>Barco Log Analyzer</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="favicon.svg">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap');
 
@@ -39,12 +41,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .brand-title{font-weight:900;font-size:clamp(44px,10vw,80px);text-transform:uppercase;line-height:.95;color:var(--white)}
 .brand-title em{font-style:normal;color:var(--accent);display:block;font-weight:300;font-size:.45em;letter-spacing:8px;margin-top:8px}
 .brand-sub{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);margin-top:14px}
-.brand-logo{height:72px;width:auto;opacity:.92;filter:brightness(1.1)}
-.brand-logos{display:flex;align-items:center;justify-content:center;gap:24px;margin-bottom:20px}
-.brand-logos .barco-logo{height:60px;width:auto;opacity:.95;border-radius:4px}
+.brand-logo{height:90px;width:auto;opacity:.95;margin-bottom:20px}
 .brand-made{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--muted);margin-top:18px;opacity:.6}
-.brand-made a{color:var(--accent);text-decoration:none;opacity:.8}
-.brand-logos .sep{width:1px;height:50px;background:var(--border2);opacity:.5}
 #drop-zone{width:100%;max-width:520px;border:2px dashed var(--border2);border-radius:var(--r);padding:52px 32px 40px;text-align:center;cursor:pointer;background:rgba(13,17,25,.7);transition:all .22s ease;animation:fadeUp .7s .12s ease both;position:relative}
 #drop-zone:hover,#drop-zone.over{border-color:var(--accent);background:rgba(0,200,240,.04);box-shadow:0 0 48px rgba(0,200,240,.08)}
 #drop-zone.over{transform:scale(1.015)}
@@ -310,11 +308,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
   <div class="proj-beam"></div>
   <div class="grid-bg"></div>
   <div class="brand">
-    <div class="brand-logos">
-      <img src="barco_logo.svg" alt="Barco" class="barco-logo">
-      <div class="sep"></div>
-      <img src="logo_sigra.png" alt="Sigra Film" class="brand-logo">
-    </div>
+    <img src="logo_combined.svg" alt="Sigra Film × Barco" class="brand-logo">
     <div class="brand-eyebrow">Sigra Film — Barco Cinema Projector</div>
     <div class="brand-title">Log Analyzer<em>Diagnostics Suite</em></div>
     <div class="brand-sub">DP2000 · DP2K · DP4K · DP2K-S · Alchemy Series</div>
@@ -345,7 +339,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 <div id="results-screen">
   <div class="topbar">
     <div class="tb-logo">
-      <img src="logo_sigra.png" alt="Sigra Film">
+      <img src="logo_combined.svg" alt="Sigra Film × Barco">
       <div class="tb-logo-text">Barco Cinema<strong id="tb-model">—</strong></div>
     </div>
     <div class="tb-badges">
