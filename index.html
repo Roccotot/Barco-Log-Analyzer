@@ -687,7 +687,7 @@ function analyze(files){
     const pm=(/name="barco"\s+vs="([^"]+)"/i).exec(v);r.fw.barcoPkg=pm?pm[1]:'—';
     const tm=(/name="ti"\s+vs="([^"]+)"/i).exec(v);r.fw.tiPkg=tm?tm[1]:'—';
     const getVs=n=>{const m=new RegExp(`name="${n}"[^>]*vs="([^"]+)"`,'i').exec(v);return m?m[1]:null;};
-    r.fw.dp80=getVs('dp80')||'—';r.fw.kernel=getVs('kernel')||'—';
+    r.fw.dp80=getVs('dp80')||getVs('dp60')||'—';r.fw.kernel=getVs('kernel')||'—';
     r.fw.armMain=getVs('arm_main_application')||'—';r.fw.dspMain=getVs('dsp_main_application')||'—';
     // parse cats
     const catRe=/<cat name="([^"]+)">([\s\S]*?)<\/cat>/gi;let cm;
@@ -770,14 +770,15 @@ function analyze(files){
       // DP3000 uses a completely different log format
       const p=r.isDP3000?parseDP3000Line(line):parseProjLine(line);
       if(!p)continue;
-      // Boot detection: dp80/dp60 (C/B series), dp61 (S/E/SLP series), or syslogd restart
-      if((p.msg.includes('starting application')&&/^dp(80|61|60)$/.test(p.proc))||
-         (p.proc==='syslogd'&&p.msg.toLowerCase().includes('started')))r.bootCount++;
+      // Boot detection: dp80/dp60 (C/B series), dp61 (S/E/SLP series)
+      // syslogd counted separately as fallback only
+      if(p.msg.includes('starting application')&&/^dp(80|61|60)$/.test(p.proc))r.bootCount++;
+      if(p.proc==='syslogd'&&p.msg.toLowerCase().includes('started'))r._syslogStarts=(r._syslogStarts||0)+1;
       // Power interruption events (Serie S/E ipid daemon)
       if(p.proc==='ipid'&&p.msg.toLowerCase().includes('power interruption'))r.powerInterruptions++;
       const lvl=p.level;const ml=p.msg.toLowerCase();
-      // Skip kernel boot noise (Jan 1 pre-NTP entries are not real errors)
-      const isBootNoise=p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond');
+      // Skip kernel boot noise: Jan 1 00: (Serie S) or Dec 31 (older DP2K pre-NTP epoch)
+      const isBootNoise=/^(Jan  1 00:|Dec 31 )/.test(p.dt)&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond');
       if(lvl==='crit'||lvl==='emerg'){
         if(!isBootNoise)r.critEvents.push(p);
         if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
@@ -795,11 +796,10 @@ function analyze(files){
       if(isLampOn)lampOns.push(p);
       if(isLampOff)lampOffs.push(p);
     }
-    // Also detect boots via raw syslogd lines (Serie S reboots show before NTP sync)
-    if(r.isSerieS){
-      const syslogStarts=(files.projLog.match(/syslogd started/g)||[]).length;
-      if(syslogStarts>r.bootCount)r.bootCount=syslogStarts;
-    }
+    // Fallback boot count via syslogd (use only when dp-start events not found, or for Serie S)
+    const syslogStarts=r._syslogStarts||0;
+    if(r.isSerieS){if(syslogStarts>r.bootCount)r.bootCount=syslogStarts;}
+    else if(!r.bootCount&&syslogStarts)r.bootCount=syslogStarts;
     // Lamp sessions
     const usedOff=new Set();
     for(let i=0;i<Math.min(lampOns.length,20);i++){
