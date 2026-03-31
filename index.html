@@ -780,7 +780,7 @@ function analyze(files){
       // Skip kernel boot noise: Jan 1 00: (Serie S) or Dec 31 17:00: (older DP2K pre-NTP epoch, all procs)
       // Also skip kernel messages with uptime < 1s prefix "[ 0." (always boot-time noise, any date)
       // Also skip dnsd "accepting UDP packets" (daemon startup, not a real error)
-      const isBootNoise=(p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond'))||p.dt.startsWith('Dec 31 17:00:')||(p.proc==='kernel'&&/^\[\s*0\./.test(p.msg))||(p.proc==='dnsd'&&ml.includes('accepting udp packets'));
+      const isBootNoise=(p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond'||p.proc==='portmap'))||p.dt.startsWith('Dec 31 17:00:')||(p.proc==='kernel'&&/^\[\s*0\./.test(p.msg))||(p.proc==='dnsd'&&ml.includes('accepting udp packets'));
       if(lvl==='crit'||lvl==='emerg'){
         if(!isBootNoise)r.critEvents.push(p);
         if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
