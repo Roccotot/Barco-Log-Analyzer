@@ -403,7 +403,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- JSZip incluso nel progetto: il tool deve funzionare anche in cabina di proiezione
+     senza connessione a Internet, dove il CDN non è raggiungibile. -->
+<script src="vendor/jszip.min.js"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
@@ -537,27 +539,50 @@ $('file-input').addEventListener('change',()=>{if($('file-input').files[0])load(
 async function load(file){
   showScreen('progress-screen');setProgress(5,'Lettura archivio…');
   try{
+    if(typeof JSZip==='undefined')throw new Error('Libreria JSZip non caricata: verificare che il file vendor/jszip.min.js sia presente accanto a index.html.');
     const zip=await JSZip.loadAsync(file);
     const files={allNames:Object.keys(zip.files).filter(n=>!zip.files[n].dir)};
     setProgress(15,'Identificazione file…');
+    // Due passaggi: prima si classificano i nomi, poi si legge SOLO il file scelto per
+    // ogni ruolo. Evita di caricare in memoria i log ruotati e quelli mai utilizzati
+    // (un pacchetto reale contiene anche 17 MB di CommunicatorLog).
+    const ROLES=[
+      // [ruolo, test sul nome base]. L'ordine conta: il primo test che passa vince,
+      // quindi le voci più specifiche vanno prima di quelle generiche.
+      ['cfeStatus',  l=>/cinemafrontendstatus/.test(l)],
+      ['projLog',    l=>/projectorlog/.test(l)],
+      ['commLog',    l=>/communicatorlog/.test(l)],
+      ['versionInfo',l=>/version_info/.test(l)],
+      ['parameters', l=>/^parameters\.txt$/.test(l)],
+      ['errorMsg',   l=>/error_messages/.test(l)],
+      ['lampHistory',l=>/lamphistorylog/.test(l)],
+      ['lpsLog',     l=>/lpslogfile/.test(l)],
+      ['temperatures',l=>/^temperatures\.txt$/.test(l)],
+      ['voltages',   l=>/^voltages\.txt$/.test(l)],
+      ['speeds',     l=>/^speeds\.txt$/.test(l)],
+      ['hardwareInfo',l=>/hardware_info/.test(l)],
+      ['icmpRaid',   l=>/icmpraidsinfo|icmpraidinfo/.test(l)],
+      ['runtimes',   l=>/^runtimes\.txt$/.test(l)],
+    ];
+    // I log ruotati di Barco usano un suffisso numerico crescente col passare del tempo:
+    // CommunicatorLog0 è il più recente, CommunicatorLog1 quello archiviato prima.
+    // Teniamo quindi il suffisso più basso (0 = corrente) e scartiamo gli archivi.
+    const rotIdx=l=>{const m=/(\d+)\.[a-z]+$/.exec(l);return m?+m[1]:-1;};
+    const picked={};// ruolo -> {name, rot}
+    files.rotatedSkipped=[];
     for(const name of files.allNames){
       const low=name.toLowerCase().replace(/.*\//,'');
-      if(/projectorlog/i.test(low))          files.projLog=await zip.files[name].async('string');
-      else if(/communicatorlog/i.test(low))  files.commLog=await zip.files[name].async('string');
-      else if(/version_info/i.test(low))     files.versionInfo=await zip.files[name].async('string');
-      else if(/^parameters\.txt$/i.test(low))files.parameters=await zip.files[name].async('string');
-      else if(/error_messages/i.test(low))   files.errorMsg=await zip.files[name].async('string');
-      else if(/cinemafrontend/i.test(low))   files.cfeStatus=await zip.files[name].async('string');
-      else if(/lamphistorylog/i.test(low))   files.lampHistory=await zip.files[name].async('string');
-      else if(/lpslogfile/i.test(low))       files.lpsLog=await zip.files[name].async('string');
-      else if(/^temperatures\.txt$/i.test(low)) files.temperatures=await zip.files[name].async('string');
-      else if(/^voltages\.txt$/i.test(low))  files.voltages=await zip.files[name].async('string');
-      else if(/^speeds\.txt$/i.test(low))    files.speeds=await zip.files[name].async('string');
-      else if(/hardware_info/i.test(low))    files.hardwareInfo=await zip.files[name].async('string');
-      else if(/icmpraidsinfo|icmpraidinfo/i.test(low)) files.icmpRaid=await zip.files[name].async('string');
-      else if(/icmpsyslog/i.test(low))       files.icmpSyslog=await zip.files[name].async('string');
-      else if(/^runtimes\.txt$/i.test(low))  files.runtimes=await zip.files[name].async('string');
-      else if(/cinemafrontendlog/i.test(low)&&!/upgrade|status/i.test(low)) files.cfeLog=await zip.files[name].async('string');
+      const role=ROLES.find(([,t])=>t(low));
+      if(!role)continue;
+      const rot=rotIdx(low),cur=picked[role[0]];
+      if(!cur||rot<cur.rot){
+        if(cur)files.rotatedSkipped.push(cur.name.replace(/.*\//,''));
+        picked[role[0]]={name,rot};
+      }else files.rotatedSkipped.push(name.replace(/.*\//,''));
+    }
+    for(const[role,{name}]of Object.entries(picked)){
+      files[role]=await zip.files[name].async('string');
+      files[role+'Name']=name.replace(/.*\//,'');
     }
     setProgress(40,'Parsing log…');await tick();
     const r=analyze(files);
@@ -578,6 +603,16 @@ function xmlAttr(xml,attr){
   return m?m[1].replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&lt;/g,'<').trim():null;
 }
 function parseLines(txt){return txt?txt.replace(/\r/g,'').split('\n'):[]}
+// Restituisce la lista di attributi del primo tag <Nome ...>, per poter leggere un
+// attributo NELL'elemento giusto. xmlAttr() da solo cerca in tutto il documento e
+// prende la prima occorrenza: su Parameters.txt "Version" pescava il version="1.00"
+// di <diagnosticspackage> invece di quello di <Communicator>.
+function xmlTag(xml,tag){
+  if(!xml)return null;
+  const m=new RegExp('<'+tag+'(\\s[^>]*|)\\/?>','i').exec(xml);
+  return m?m[1]:null;
+}
+const xmlTagAttr=(xml,tag,attr)=>xmlAttr(xmlTag(xml,tag),attr);
 
 function parseProjLine(line){
   // Supports both DP4K/DP2K (simple hostname) and Serie S (DP2K-10Sx-SERIAL with hyphens)
@@ -632,8 +667,10 @@ function analyze(files){
     lampOnFails:0,rtcFails:0,ntpIssues:0,powerInterruptions:0,
     commWarnCount:0,commErrCount:0,
     allNames:files.allNames||[],
+    usedFiles:Object.keys(files).filter(k=>k.endsWith('Name')).map(k=>[k.slice(0,-4),files[k]]),
+    skippedFiles:files.rotatedSkipped||[],
     versionCats:[],temps:[],voltages:[],fanSpeeds:[],
-    raidStatus:null,laserHours:null,
+    raidStatus:null,laserHours:null,lps:null,boards:null,
     rawProjLines:[],rawCommLines:[],
     isSerieS:false,isDP3000:false,isLaser:false
   };
@@ -641,19 +678,26 @@ function analyze(files){
   // Parameters
   if(files.parameters){
     const p=files.parameters;
-    r.device.identifier=xmlAttr(p,'Identifier')||'DP-Series';
-    r.device.serial=xmlAttr(p,'serial_number')||'—';
-    r.device.runtime=xmlAttr(p,'runtime')||'—';
-    r.device.ip=xmlAttr(p,'IP_address')||'—';
-    r.device.gateway=xmlAttr(p,'IP_default_gateway')||'—';
-    r.device.mask=xmlAttr(p,'IP_subnet_mask')||'—';
-    r.device.btn1=xmlAttr(p,'BUTTON_01')||'—';
-    r.device.btn2=xmlAttr(p,'BUTTON_02')||'—';
-    r.device.cloKey=xmlAttr(p,'CLO')||'—';
-    r.device.lensKey=xmlAttr(p,'Lens_memory')||'—';
-    r.device.snmp=xmlAttr(p,'SNMP')||'—';
-    r.device.commVer=xmlAttr(p,'Version')||'—';
-    r.device.mediablock=xmlAttr(p,'type')||'—';// from <Mediablock type="..."/>
+    // Ogni attributo viene letto nel proprio elemento: il file contiene anche i dati
+    // del PC su cui gira il Communicator (<LocalSystem>), che altrimenti possono
+    // sovrascrivere IP e versioni del proiettore.
+    const proj=xmlTag(p,'Projector')||p;
+    const comm=xmlTag(p,'Communication')||p;
+    r.device.identifier=xmlAttr(proj,'Identifier')||'DP-Series';
+    r.device.serial=xmlAttr(proj,'serial_number')||'—';
+    r.device.runtime=xmlAttr(proj,'runtime')||'—';
+    r.device.unCode=xmlAttr(proj,'UN_code')||'—';
+    r.device.ip=xmlAttr(comm,'IP_address')||'—';
+    r.device.gateway=xmlAttr(comm,'IP_default_gateway')||'—';
+    r.device.mask=xmlAttr(comm,'IP_subnet_mask')||'—';
+    r.device.dhcp=xmlAttr(comm,'DHCP')||'—';
+    r.device.btn1=xmlTagAttr(p,'Presets','BUTTON_01')||'—';
+    r.device.btn2=xmlTagAttr(p,'Presets','BUTTON_02')||'—';
+    r.device.cloKey=xmlTagAttr(p,'Keys','CLO')||'—';
+    r.device.lensKey=xmlTagAttr(p,'Keys','Lens_memory')||'—';
+    r.device.snmp=xmlTagAttr(p,'Keys','SNMP')||'—';
+    r.device.commVer=xmlTagAttr(p,'Communicator','Version')||'—';
+    r.device.mediablock=xmlTagAttr(p,'Mediablock','type')||'—';
     const lb=/<Lamp1?([^>]*)>/i.exec(p);// matches <Lamp> or <Lamp1>
     if(lb){
       const mr=/runtime="(\d+)"/i.exec(lb[0]);if(mr)r.lamp.runtime=mr[1];
@@ -689,13 +733,23 @@ function analyze(files){
     const getVs=n=>{const m=new RegExp(`name="${n}"[^>]*vs="([^"]+)"`,'i').exec(v);return m?m[1]:null;};
     r.fw.dp80=getVs('dp80')||getVs('dp60')||'—';r.fw.kernel=getVs('kernel')||'—';
     r.fw.armMain=getVs('arm_main_application')||'—';r.fw.dspMain=getVs('dsp_main_application')||'—';
-    // parse cats
-    const catRe=/<cat name="([^"]+)">([\s\S]*?)<\/cat>/gi;let cm;
-    while((cm=catRe.exec(v))!==null){
-      const items=[];const ir=/<file name="([^"]+)"(?:\s+displayname="([^"]*)")?[^>]*vs="([^"]+)"/gi;let im;
-      while((im=ir.exec(cm[2]))!==null)items.push({name:im[1],display:im[2]||im[1],vs:im[3]});
-      if(items.length)r.versionCats.push({cat:cm[1],items});
-    }
+    // Version_info.txt scrive i tag con uno spazio prima della chiusura
+    // (<cat name="applications" > … </cat >): senza \s* nessuna categoria veniva
+    // riconosciuta e l'intero elenco firmware restava vuoto.
+    // Le categorie sono inoltre annidate in due package (barco e ti) che usano
+    // nomi uguali, quindi si antepone il package all'etichetta.
+    const pkgRe=/<package\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/package\s*>/gi;let pm2;
+    const scanCats=(block,pkg)=>{
+      const catRe=/<cat\s+name="([^"]+)"\s*>([\s\S]*?)<\/cat\s*>/gi;let cm;
+      while((cm=catRe.exec(block))!==null){
+        const items=[];const ir=/<file\s+name="([^"]+)"(?:\s+displayname="([^"]*)")?[^>]*vs="([^"]+)"/gi;let im;
+        while((im=ir.exec(cm[2]))!==null)items.push({name:im[1],display:im[2]||im[1],vs:im[3]});
+        if(items.length)r.versionCats.push({cat:pkg?pkg+' — '+cm[1]:cm[1],items});
+      }
+    };
+    let anyPkg=false;
+    while((pm2=pkgRe.exec(v))!==null){anyPkg=true;scanCats(pm2[2],pm2[1]);}
+    if(!anyPkg)scanCats(v,'');
   }
 
   // CFE Status — two formats:
@@ -723,7 +777,6 @@ function analyze(files){
       r.cfe.icpFmt=parseStatus('ICP FMT operation');
       // Formatter board
       r.cfe.formatter=ok('formatter board - nok')?'NOK':ok('formatter board - ok')?'OK':'—';
-      r.cfe.system=r.cfe.icpSystem==='OK'&&r.cfe.linkDecryptor==='OK'?'OK':'FAULT';
     }else{
       // Old format
       r.cfe.format='classic';
@@ -740,6 +793,18 @@ function analyze(files){
     r.cfe.encrypt=(()=>{const m=/link encryption\s*(\S+)/i.exec(s);return m&&m[1]&&m[1].toLowerCase()!=='status'?m[1]:'NONE';})();
     r.cfe.raw=s.trim();
   }
+  // Riepilogo CFE. Un controllo assente dal file ('—') significa "non riportato da
+  // questo modello", non "guasto": va ignorato, altrimenti un DP2K-19B — che non ha
+  // la sezione Link Decryptor — verrebbe segnalato come CRITICO senza motivo.
+  const CFE_CHECKS=[['linkDecryptor','Link Decryptor'],['linkSelfTest','Link Self Test'],
+    ['marriage','Marriage'],['icpSystem','ICP System'],['icpSelfTest','ICP Self Test'],
+    ['icpFmt','ICP FMT Mode'],['system','System Status'],['selfTest','Self Test'],
+    ['ifaceArm','Interface ARM'],['ifaceFpga','Interface FPGA'],['dsp','Processor DSP'],
+    ['procFpga','Processor FPGA'],['formatter','Formatter Board']];
+  const isOkVal=v=>v==null||v==='—'||/^ok$/i.test(v);
+  r.cfe.faults=CFE_CHECKS.filter(([k])=>!isOkVal(r.cfe[k])).map(([k,label])=>({label,value:r.cfe[k]}));
+  r.cfe.reported=CFE_CHECKS.filter(([k])=>r.cfe[k]&&r.cfe[k]!=='—').length;
+  r.cfe.ok=r.cfe.reported>0&&r.cfe.faults.length===0;
 
   // Error messages file — two formats:
   // Old: plain text "ti - system status = fail"
@@ -765,7 +830,7 @@ function analyze(files){
     // Detect model family
     r.isSerieS=lines.some(l=>/\sdp61\[/.test(l));
     r.isDP3000=!r.isSerieS&&lines.some(l=>/^\d+=\d{14}\s+-/.test(l.trim()));
-    const lampOns=[],lampOffs=[];
+    const lampEvents=[];
     for(const line of lines){
       // DP3000 uses a completely different log format
       const p=r.isDP3000?parseDP3000Line(line):parseProjLine(line);
@@ -795,24 +860,36 @@ function analyze(files){
       // Lamp ON: classic "set lamp on" or Serie S "set light on"
       const isLampOn=(ml.includes('set lamp on')||ml.includes('set light on'))&&!ml.includes('already on')&&!ml.includes('failed')&&!ml.includes('interval');
       const isLampOff=(ml.includes('set lamp off')||ml.includes('set light off'))&&!ml.includes('already off');
-      if(isLampOn)lampOns.push(p);
-      if(isLampOff)lampOffs.push(p);
+      if(isLampOn)lampEvents.push({p,on:true});
+      else if(isLampOff)lampEvents.push({p,on:false});
     }
     // Fallback boot count via syslogd (use only when dp-start events not found, or for Serie S)
     const syslogStarts=r._syslogStarts||0;
     if(r.isSerieS){if(syslogStarts>r.bootCount)r.bootCount=syslogStarts;}
     else if(!r.bootCount&&syslogStarts)r.bootCount=syslogStarts;
-    // Lamp sessions
-    const usedOff=new Set();
-    for(let i=0;i<Math.min(lampOns.length,20);i++){
-      const on=lampOns[i];let off=null;
-      for(let j=0;j<lampOffs.length;j++){if(!usedOff.has(j)&&lampOffs[j].idx>on.idx){off=j;break;}}
-      const nextIdx=i+1<lampOns.length?lampOns[i+1].idx:Infinity;
-      const crit=r.critEvents.some(c=>c.idx>on.idx&&c.idx<(off!=null?lampOffs[off].idx:nextIdx)&&c.msg.toLowerCase().includes('lamp'));
-      let dur=null;
-      if(off!==null){usedOff.add(off);dur=minDiff(on.dt,lampOffs[off].dt);}
-      r.lampSessions.push({dt:on.dt,dur,crit});
+    // Sessioni lampada come macchina a stati: l'automazione di sala invia "set lamp on"
+    // a ogni spettacolo anche quando la lampada è già accesa, quindi un comando ON non
+    // equivale a una sessione. Una sessione va dal primo ON dopo uno spegnimento fino
+    // all'OFF successivo; gli ON ripetuti nel mezzo vengono contati a parte.
+    let open=null;
+    for(const{p:ev,on}of lampEvents){
+      if(on){
+        if(open)open.repeats++;
+        else open={start:ev,repeats:0};
+      }else if(open){
+        r.lampSessions.push({dt:open.start.dt,end:ev.dt,dur:minDiff(open.start.dt,ev.dt),
+          repeats:open.repeats,
+          crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.idx<ev.idx&&c.msg.toLowerCase().includes('lamp'))});
+        open=null;
+      }
     }
+    // Sessione ancora aperta a fine log: la lampada risultava accesa.
+    if(open)r.lampSessions.push({dt:open.start.dt,end:null,dur:null,repeats:open.repeats,open:true,
+      crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.msg.toLowerCase().includes('lamp'))});
+    r.lampOnCommands=lampEvents.filter(e=>e.on).length;
+    r.lampSessionsTotal=r.lampSessions.length;
+    // In timeline si mostrano solo le sessioni più recenti, non le più vecchie.
+    r.lampSessions=r.lampSessions.slice(-50);
   }
 
   // CommunicatorLog
@@ -857,6 +934,91 @@ function analyze(files){
     }
   }
 
+  // ── LPSLogFile: log dell'alimentatore lampada (Lamp Power Supply) ──
+  // Contiene tensione di rete, temperature interne dell'alimentatore, potenza
+  // impostata sulla lampada e l'esito del test ventole: dati che non compaiono in
+  // nessun altro file del pacchetto.
+  if(files.lpsLog){
+    const lps={mains:[],temps:{},power:null,current:null,strikes:0,fanTest:null,sw:null,last:null,lines:0};
+    // Il file usa il grado come byte latin-1: si legge solo il numero, non l'unità.
+    const num=t=>{const m=/(-?\d+(?:\.\d+)?)/.exec(t);return m?parseFloat(m[1]):null;};
+    for(const line of parseLines(files.lpsLog)){
+      const m=/^(\w{3}\s+\d+\s+[\d:]+)\s+(\d{4})\s+\S+\s+\S+\s+\S+?(?:\[\d+\])?:\s+lps\[\d+\]\s*-\s*(.+)$/.exec(line.trim());
+      if(!m)continue;
+      const yr=+m[2];
+      // Righe con orologio non ancora sincronizzato (1969/1999): timestamp inutilizzabile.
+      const dt=yr>=2000?m[1].trim()+' '+m[2]:null;
+      const msg=m[3].trim();lps.lines++;
+      if(dt)lps.last=dt;
+      let mm;
+      if((mm=/^Mains voltage:\s*(.+)$/i.exec(msg))){const v=num(mm[1]);if(v!=null)lps.mains.push({dt,v});}
+      else if((mm=/^Temp (ambient|heatsink 1|heatsink 2|transfo|rectifier)\s*:\s*(.+)$/i.exec(msg))||
+              (mm=/^(Ambient) temperature:\s*(.+)$/i.exec(msg))){
+        const k=mm[1].toLowerCase()==='ambient'?'ambient':mm[1].toLowerCase();
+        const v=num(mm[2]);if(v!=null)lps.temps[k]={v,dt};
+      }
+      else if((mm=/^Par:\s*\S+\s*-\s*P:\s*(\d+)W\s*-.*?\bI:\s*(\d+)A/i.exec(msg))){lps.power=+mm[1];lps.current=+mm[2];}
+      else if(/^Lamp switch-on command received/i.test(msg))lps.strikes++;
+      else if(/^Fan test completed successfully/i.test(msg))lps.fanTest='OK';
+      else if(/^Fan test/i.test(msg)&&/fail|error|not working/i.test(msg))lps.fanTest='FAIL';
+      else if((mm=/^Starting software version:\s*(.+)$/i.exec(msg)))lps.sw=mm[1].trim();
+    }
+    if(lps.lines){
+      const vs=lps.mains.map(x=>x.v);
+      if(vs.length)lps.mainsStats={last:vs[vs.length-1],min:Math.min(...vs),max:Math.max(...vs),n:vs.length};
+      r.lps=lps;
+    }
+  }
+
+  // ── Hardware_info: anagrafica schede (codice articolo, seriale, data di produzione) ──
+  // Serve al tecnico per ordinare i ricambi senza dover aprire il proiettore.
+  if(files.hardwareInfo){
+    const boards=[];
+    const re=/<device\s+type="([^"]*)"\s+name="([^"]*)"\s*>([\s\S]*?)<\/device>/gi;
+    const field=(blk,tag)=>{const m=new RegExp('<'+tag+'>([\\s\\S]*?)</'+tag+'>','i').exec(blk);
+      const v=m?m[1].trim():'';return(!v||/^unknown$/i.test(v))?'':v;};
+    let m;
+    while((m=re.exec(files.hardwareInfo))!==null){
+      const blk=m[3];
+      const b={type:m[1],name:m[2].replace(/\s*board id$/i,''),
+        location:field(blk,'location'),version:field(blk,'versionnumber'),
+        article:field(blk,'modulearticlenumber'),serial:field(blk,'moduleserialnumber'),
+        made:field(blk,'moduleproductiondate'),iface:field(blk,'interface')};
+      // Le schede non popolate compaiono con tutti i campi a "unknown": si scartano.
+      if(b.article||b.serial)boards.push(b);
+    }
+    if(boards.length)r.boards=boards;
+  }
+
+  // Vita utile attesa della lampada. Il valore fisso di 2000h non vale per tutti i
+  // modelli: su questo proiettore lo storico mostra lampade da 3000-6000h. Quando il
+  // LampHistoryLogFile è disponibile si usa la mediana delle lampade già sostituite
+  // (la mediana ignora i casi anomali, es. una lampada resa dopo poche ore).
+  const LAMP_LIFE_DEFAULT=2000;
+  r.lampStats={expected:LAMP_LIFE_DEFAULT,source:'default',samples:0,last:null,avgStrikes:null};
+  if(r.lampHistory.length){
+    const hrs=r.lampHistory.map(l=>{
+      const m=/^(\d+):(\d+)/.exec(l.runtime||'');
+      return m?+m[1]+ +m[2]/60:null;
+    }).filter(h=>h!=null&&h>0);
+    if(hrs.length){
+      const sorted=[...hrs].sort((a,b)=>a-b),mid=sorted.length>>1;
+      const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
+      r.lampStats.expected=Math.round(median);
+      r.lampStats.source='storico';
+      r.lampStats.samples=hrs.length;
+      r.lampStats.min=Math.round(sorted[0]);
+      r.lampStats.max=Math.round(sorted[sorted.length-1]);
+    }
+    const last=r.lampHistory[r.lampHistory.length-1];
+    r.lampStats.last=last.dt||null;
+    const strikes=r.lampHistory.map(l=>parseInt(l.strikes,10)).filter(n=>!isNaN(n)&&n>0);
+    if(strikes.length)r.lampStats.avgStrikes=Math.round(strikes.reduce((a,b)=>a+b,0)/strikes.length);
+  }
+  const curH=parseInt(r.lamp.runtime,10)||0;
+  r.lampStats.current=curH;
+  r.lampStats.pct=r.lampStats.expected>0?Math.round(curH/r.lampStats.expected*100):0;
+
   // Temperatures, Voltages, Fan Speeds (XML snapshot)
   r.temps=parseXmlItems(files.temperatures,'temperature');
   r.voltages=parseXmlItems(files.voltages,'voltage');
@@ -888,11 +1050,21 @@ function analyze(files){
   return r;
 }
 
+// Differenza in minuti fra due timestamp syslog "Mon DD HH:MM:SS" (senza anno).
+// Tiene conto del giorno, così una sessione che supera la mezzanotte o le 12 ore
+// viene misurata invece di essere scartata.
 function minDiff(a,b){
   try{
-    const toM=d=>{const p=d.trim().split(/\s+/);const t=(p[2]||p[1]||'').split(':').map(Number);return t.length>=2?t[0]*60+t[1]:null;};
-    const x=toM(a),y=toM(b);if(x===null||y===null)return null;
-    let d=y-x;if(d<0)d+=1440;return d>0&&d<720?d:null;
+    const parse=d=>{
+      const m=/^(?:(\d{4})\s+)?(\w{3})\s+(\d+)\s+(\d+):(\d+)/.exec(d.trim());
+      if(!m)return null;
+      const mo=_MO[m[2].toLowerCase()];if(mo==null)return null;
+      return Date.UTC(m[1]?+m[1]:2001,mo,+m[3],+m[4],+m[5])/60000;
+    };
+    const x=parse(a),y=parse(b);if(x===null||y===null)return null;
+    let d=y-x;
+    if(d<0)d+=365*1440;// cambio d'anno: i log syslog non portano l'anno
+    return d>0&&d<36*60?Math.round(d):null;
   }catch{return null;}
 }
 
@@ -911,13 +1083,13 @@ function render(r){
 
 // ── Overview ──
 function renderOverview(r){
-  const d=r.device;const lh=parseInt(r.lamp.runtime)||0;
+  const d=r.device;const lh=parseInt(r.lamp.runtime)||0;const st=r.lampStats||{expected:2000,source:'default',pct:0};
   const kpis=[
     {l:'Ore Proiettore',v:d.runtime||'—',s:'runtime totale',cls:'ki'},
-    {l:'Ore Lampada',v:r.lamp.runtime||'—',s:r.lamp.desc,cls:lh>1500?'kw':'ko'},
+    {l:'Ore Lampada',v:r.lamp.runtime||'—',s:st.source==='storico'?`${st.pct}% di ${st.expected}h attesi`:r.lamp.desc,cls:st.pct>=90?'kc':st.pct>=75?'kw':'ko'},
     {l:'Shutdown Critici',v:r.lampCritOff,s:'lamp switched off',cls:r.lampCritOff>0?'kc':'ko'},
     {l:'Dowser Falliti',v:r.dowserFails,s:'set dowser open failed',cls:r.dowserFails>3?'kc':r.dowserFails>0?'kor':'ko'},
-    {l:'Interruzioni Rete',v:r.powerInterruptions,s:'power interruption',cls:r.powerInterruptions>3?'kc':r.powerInterruptions>0?'kw':'ko'},
+    {l:'Interruzioni Alim.',v:r.powerInterruptions,s:'power interruption',cls:r.powerInterruptions>3?'kc':r.powerInterruptions>0?'kw':'ko'},
     {l:'Boot Registrati',v:r.bootCount,s:'riavvii nel log',cls:'ki'},
   ];
   const kpiHtml=`<div class="kpi-strip">${kpis.map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${esc(k.s||'')}</div></div>`).join('')}</div>`;
@@ -943,12 +1115,30 @@ function buildAnalysis(r){
   else if(r.powerInterruptions>0)items.push(['aw',`⚠ Interruzioni di corrente rilevate (${r.powerInterruptions}×)`,`Rilevate ${r.powerInterruptions} interruzioni di rete. Monitorare la stabilità dell'alimentazione.`]);
   if(r.device.cloKey&&r.device.cloKey.toLowerCase()==='not valid')items.push(['aw',`⚠ CLO Key non valida`,`Il proiettore opera senza Constant Light Output. La luminosità non viene compensata nel tempo.`]);
   const lh=parseInt(r.lamp.runtime)||0;
-  if(lh>1500)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}`]);
+  const st=r.lampStats||{expected:2000,source:'default',pct:0};
+  const lifeNote=st.source==='storico'
+    ?`Riferimento: ${st.expected}h, mediana delle ${st.samples} lampade sostituite su questo proiettore.`
+    :`Riferimento generico ${st.expected}h: nel pacchetto non c'è lo storico sostituzioni.`;
+  if(st.pct>=90)items.push(['ac',`🔴 Lampada a fine vita (${r.lamp.runtime}h — ${st.pct}%)`,`Programmare la sostituzione. ${r.lamp.desc} — ${r.lamp.article}. ${lifeNote}`]);
+  else if(st.pct>=75)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h — ${st.pct}%)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}. ${lifeNote}`]);
   // Active errors from Error_messages.txt
   const activeErr=r.activeErrors.filter(e=>e.sev==='ERROR');
   const activeWarn=r.activeErrors.filter(e=>e.sev==='WARN');
   if(activeErr.length)items.push(['ac',`🔴 ATTIVI — ${activeErr.length} errore/i presenti`,activeErr.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
   else if(activeWarn.length)items.push(['aw',`⚠ Warning attivi — ${activeWarn.length}`,activeWarn.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
+  // Le notifiche (severità N in Error_messages.txt) venivano lette ma mai mostrate:
+  // è lì che il proiettore segnala la manutenzione periodica dovuta.
+  const activeNote=r.activeErrors.filter(e=>e.sev==='INFO');
+  if(activeNote.length)items.push(['ao',`ℹ Notifiche attive — ${activeNote.length}`,activeNote.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
+
+  // Diagnostica dall'alimentatore lampada (LPSLogFile).
+  if(r.lps){
+    const ms=r.lps.mainsStats;
+    if(ms&&(ms.min<207||ms.max>253))items.push(['aw',`⚠ Tensione di rete fuori range (${ms.min}–${ms.max} V)`,`L'alimentatore lampada ha misurato valori fuori dalla finestra 207–253 V (230 V ±10%). Verificare la linea elettrica della sala.`]);
+    if(r.lps.fanTest==='FAIL')items.push(['ac',`🔴 CRITICO — Test ventole LPS fallito`,`L'alimentatore lampada segnala una o più ventole non funzionanti. Rischio di surriscaldamento: intervenire prima del prossimo spettacolo.`]);
+    const hot=Object.entries(r.lps.temps||{}).filter(([,t])=>t.v>60);
+    if(hot.length)items.push(['aw',`⚠ Temperature LPS elevate`,hot.map(([k,t])=>`${k}: ${t.v} °C`).join(' • ')+`. Verificare filtri e flusso d'aria.`]);
+  }
   // RAID status (ICMP)
   if(r.raidStatus){
     const badHdd=r.raidStatus.hdds.filter(h=>h.error&&h.error!=='None'&&h.available==='No');
@@ -957,10 +1147,9 @@ function buildAnalysis(r){
     else items.push(['ag',`✅ RAID ICMP Online`,`${r.raidStatus.hdds.length} dischi operativi.`]);
   }
   // CFE / ICP status
-  const cfeFault=Object.values(r.cfe).some(v=>v==='FAULT'||v==='NOT OK'||v==='NOK');
-  if(cfeFault)items.push(['ac',`🔴 CRITICO — Cinema Front End: componente in FAULT`,`Uno o più componenti CFE/ICP risultano in stato FAULT. Verificare subito.`]);
-  else if(r.cfe.marriage&&r.cfe.marriage!=='OK'&&r.cfe.marriage!=='—')items.push(['aw',`⚠ ICP Marriage non valido`,`Lo stato di marriage del Link Decryptor non è OK. Potrebbe essere necessario rifarlo.`]);
-  else if(r.cfe.system==='OK'&&r.critEvents.length===0&&r.errEvents.length===0&&!activeErr.length)items.push(['ag',`✅ CFE/ICP OK — Nessun errore rilevato`,`Cinema Front End operativo. Tutti i componenti rispondono correttamente.`]);
+  const cfeFaults=r.cfe.faults||[];
+  if(cfeFaults.length)items.push(['ac',`🔴 CRITICO — Cinema Front End: ${cfeFaults.length} controllo/i in errore`,cfeFaults.map(f=>`${f.label}: ${f.value}`).join(' • ')+`. Verificare subito.`]);
+  else if(r.cfe.ok&&r.critEvents.length===0&&r.errEvents.length===0&&!activeErr.length)items.push(['ag',`✅ CFE/ICP OK — Nessun errore rilevato`,`Cinema Front End operativo: ${r.cfe.reported} controlli verificati, tutti OK.`]);
   if(!items.length)items.push(['ag',`✅ Log pulito`,`Nessuna anomalia rilevante trovata in questo diagnostics package.`]);
   return items.map(([cls,t,b])=>`<div class="acard ${cls}"><strong>${esc(t)}</strong>${esc(b)}</div>`).join('');
 }
@@ -983,30 +1172,53 @@ function brow(label,count,max,grad){const p=max>0?Math.round(count/max*100):0;re
 
 // ── Lamp ──
 function renderLamp(r){
+  const st=r.lampStats||{expected:2000,source:'default',pct:0};
   function lampCard(lamp,label){
     const lh=parseInt(lamp.runtime)||0;
-    const pct=Math.min(100,Math.round(lh/2000*100));
-    const lc=lh>1500?'var(--crit)':lh>1000?'var(--yellow)':'var(--green)';
+    const exp=st.expected||2000;
+    const raw=exp>0?Math.round(lh/exp*100):0;
+    const pct=Math.min(100,raw);
+    const lc=raw>=90?'var(--crit)':raw>=75?'var(--yellow)':'var(--green)';
+    const scale=st.source==='storico'
+      ?`mediana di ${st.samples} lampade sostituite su questo proiettore (${st.min}–${st.max}h)`
+      :`riferimento generico: nessuno storico sostituzioni nel pacchetto`;
     return`<div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">${label}</span></div>
       <div class="ig">
         <div class="ic"><div class="ik">Descrizione</div><div class="iv">${esc(lamp.desc)}</div></div>
         <div class="ic"><div class="ik">Codice Articolo</div><div class="iv">${esc(lamp.article)}</div></div>
-        <div class="ic"><div class="ik">Ore Attuali</div><div class="iv ${lh>1500?'wa':''}">${lamp.runtime}h</div></div>
+        <div class="ic"><div class="ik">Ore Attuali</div><div class="iv ${raw>=90?'er':raw>=75?'wa':''}">${lamp.runtime}h</div></div>
         <div class="ic"><div class="ik">Seriale</div><div class="iv">${esc(lamp.serial||'—')}</div></div>
       </div>
       <div class="pb" style="padding-top:8px;">
-        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:1px;">UTILIZZO STIMATO ${pct}%</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:6px;letter-spacing:1px;">UTILIZZO STIMATO ${raw}%</div>
         <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${lc};border-radius:4px;transition:width 1s ease;"></div></div>
-        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px;">${lh}h / 2000h</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:5px;">${lh}h / ${exp}h attesi</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5;">${esc(scale)}</div>
       </div>
     </div>`;
   }
+  // Pannello alimentatore lampada (LPSLogFile), finora non utilizzato.
+  const lp=r.lps;
+  const lpsHtml=lp?`<div class="panel g1"><div class="ph"><div class="dot ${lp.fanTest==='FAIL'?'d-red':'d-blue'}"></div><span class="ph-title">Alimentatore Lampada (LPS)</span><span class="ph-count">${esc(lp.last||'—')}</span></div>
+    <div class="ig">
+      <div class="ic"><div class="ik">Tensione di Rete</div><div class="iv ${lp.mainsStats?(lp.mainsStats.last<207||lp.mainsStats.last>253?'er':'ok'):''}">${lp.mainsStats?lp.mainsStats.last+' V':'—'}</div></div>
+      <div class="ic"><div class="ik">Rete Min–Max</div><div class="iv">${lp.mainsStats?lp.mainsStats.min+' – '+lp.mainsStats.max+' V':'—'}</div></div>
+      <div class="ic"><div class="ik">Potenza Lampada</div><div class="iv">${lp.power!=null?lp.power+' W':'—'}</div></div>
+      <div class="ic"><div class="ik">Corrente</div><div class="iv">${lp.current!=null?lp.current+' A':'—'}</div></div>
+      <div class="ic"><div class="ik">Test Ventole LPS</div><div class="iv ${lp.fanTest==='OK'?'ok':lp.fanTest==='FAIL'?'er':''}">${lp.fanTest||'—'}</div></div>
+      <div class="ic"><div class="ik">Firmware LPS</div><div class="iv">${esc(lp.sw||'—')}</div></div>
+      ${Object.entries(lp.temps).map(([k,t])=>`<div class="ic"><div class="ik">Temp ${esc(k)}</div><div class="iv ${t.v>60?'er':t.v>45?'wa':'ok'}">${t.v} °C</div></div>`).join('')}
+    </div></div>`:'';
   const laserHtml=r.laserHours?`<div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Sorgente Laser (LLS)</span></div>
     <div class="ig">
       <div class="ic"><div class="ik">Ore Luce ON</div><div class="iv">${r.laserHours.lightOn??'—'}h</div></div>
       <div class="ic"><div class="ik">Ore Totali</div><div class="iv">${r.laserHours.total??'—'}h</div></div>
     </div></div>`:'';
-  const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/600*100)):4;return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${s.dur?s.dur+'min':s.crit?'ABORT':'…'}</span>${s.crit?'<span class="lr-note">⚡ CRIT</span>':'<span class="lr-note"></span>'}</div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata nel ProjectorLog</div>`;
+  const maxDur=Math.max(60,...r.lampSessions.map(s=>s.dur||0));
+  const fmtDur=m=>m==null?null:(m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'min');
+  const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/maxDur*100)):4;
+    const note=s.crit?'⚡ CRIT':s.open?'in corso':s.repeats?'×'+(s.repeats+1):'';
+    return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${fmtDur(s.dur)||(s.crit?'ABORT':'…')}</span><span class="lr-note" style="${s.crit?'':'color:var(--muted)'}">${note}</span></div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata nel ProjectorLog</div>`;
   $('tab-lamp').innerHTML=`
   ${laserHtml}
   <div class="${r.lamp2?'grid2':'grid2'}">
@@ -1015,12 +1227,15 @@ function renderLamp(r){
       <div class="ig">
         <div class="ic"><div class="ik">Shutdown Critici</div><div class="iv ${r.lampCritOff>0?'er':''}">${r.lampCritOff}</div></div>
         <div class="ic"><div class="ik">Tentativi Falliti</div><div class="iv ${r.lampOnFails>0?'wa':''}">${r.lampOnFails}</div></div>
-        <div class="ic"><div class="ik">Sessioni Trovate</div><div class="iv">${r.lampSessions.length}</div></div>
+        <div class="ic"><div class="ik">Sessioni Trovate</div><div class="iv">${r.lampSessionsTotal??r.lampSessions.length}</div></div>
+        <div class="ic"><div class="ik">Ultima Sostituzione</div><div class="iv">${esc(st.last||'—')}</div></div>
+        <div class="ic"><div class="ik">Strike Medi / Lampada</div><div class="iv">${st.avgStrikes??'—'}</div></div>
         <div class="ic"><div class="ik">CLO Key</div><div class="iv ${r.device.cloKey==='not valid'?'wa':r.device.cloKey==='valid'?'ok':''}">${(r.device.cloKey||'—').toUpperCase()}</div></div>
       </div>
     </div>
   </div>
-  <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Timeline Sessioni Lampada</span><span class="ph-count">${r.lampSessions.length}</span></div><div class="pb">${sessHtml}</div></div>
+  ${lpsHtml}
+  <div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">Timeline Sessioni Lampada${r.lampSessionsTotal>r.lampSessions.length?' — ultime '+r.lampSessions.length:''}</span><span class="ph-count">${r.lampSessionsTotal??r.lampSessions.length}</span></div><div class="pb">${sessHtml}</div></div>
   ${r.lampHistory.length?`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Storico Sostituzioni Lampada</span><span class="ph-count">${r.lampHistory.length} lampade</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Articolo</th><th class="sortable" onclick="sortTh(this)">Seriale</th><th class="sortable" onclick="sortTh(this)">Ore</th><th class="sortable" onclick="sortTh(this)">Strike</th></tr></thead><tbody>${r.lampHistory.map(l=>`<tr><td class="dt">${esc(l.dt)}</td><td class="hi">${esc(l.article)}</td><td>${esc(l.serial)}</td><td>${esc(l.runtime)}</td><td>${esc(l.strikes)}</td></tr>`).join('')}</tbody></table></div></div>`:''}`;
 }
 
@@ -1028,7 +1243,9 @@ function renderLamp(r){
 function renderDevice(r){
   const d=r.device,fw=r.fw,cf=r.cfe;
   const iv=(val,okV,waV)=>{let cls='';const v=(val||'').toLowerCase();if(okV&&v===okV.toLowerCase())cls='ok';if(waV&&v===waV.toLowerCase())cls='wa';if(v==='fault')cls='er';return`<div class="iv ${cls}">${esc(val||'—')}</div>`;};
-  const cfeOk=['system','selfTest','ifaceArm','ifaceFpga','dsp','procFpga'].every(k=>cf[k]==='OK'||cf[k]==='—');
+  const cfeOk=!(cf.faults||[]).length;
+  // Anagrafica schede da Hardware_info.txt: codice articolo e seriale per i ricambi.
+  const boardsHtml=r.boards&&r.boards.length?`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Schede Installate — Hardware_info</span><span class="ph-count">${r.boards.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Scheda</th><th class="sortable" onclick="sortTh(this)">Cod. Articolo</th><th class="sortable" onclick="sortTh(this)">Seriale</th><th class="sortable" onclick="sortTh(this)">Rev.</th><th class="sortable" onclick="sortTh(this)">Produzione</th></tr></thead><tbody>${r.boards.map(b=>`<tr><td class="hi">${esc(b.name)}</td><td>${esc(b.article||'—')}</td><td class="dt">${esc(b.serial||'—')}</td><td class="dt">${esc(b.version||'—')}</td><td class="dt">${esc(b.made||'—')}</td></tr>`).join('')}</tbody></table></div></div>`:'';
   const versHtml=r.versionCats&&r.versionCats.length?r.versionCats.map(cat=>`<div class="ver-cat">${esc(cat.cat)}</div>${cat.items.map(i=>`<div class="ver-row"><span class="ver-name">${esc(i.display||i.name)}</span><span class="ver-vs">${esc(i.vs)}</span></div>`).join('')}`).join(''):`<div class="empty">Version info non disponibile</div>`;
   $('tab-device').innerHTML=`
   <div class="grid2">
@@ -1040,6 +1257,8 @@ function renderDevice(r){
         <div class="ic"><div class="ik">IP Address</div>${iv((d.ip||'').trim())}</div>
         <div class="ic"><div class="ik">Default GW</div>${iv((d.gateway||'').trim())}</div>
         <div class="ic"><div class="ik">Subnet Mask</div>${iv((d.mask||'').trim())}</div>
+        <div class="ic"><div class="ik">DHCP</div>${iv(d.dhcp)}</div>
+        <div class="ic"><div class="ik">UN Code</div>${iv(d.unCode)}</div>
         <div class="ic"><div class="ik">Obiettivo</div>${iv(d.lens)}</div>
         <div class="ic"><div class="ik">Communicator</div>${iv(d.commVer)}</div>
         <div class="ic"><div class="ik">Button 1</div>${iv(d.btn1)}</div>
@@ -1077,7 +1296,7 @@ function renderDevice(r){
   </div>
   ${r.activeErrors.length?`<div class="panel g1"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Errori Attivi — Error_messages.txt</span><span class="ph-count">${r.activeErrors.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Codice</th><th>Messaggio</th></tr></thead><tbody>${r.activeErrors.map(e=>`<tr><td><span class="sev ${e.sev==='ERROR'?'se':e.sev==='WARN'?'sw':'si'}">${e.sev}</span></td><td class="dt">${esc(e.code)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
   ${r.raidStatus?`<div class="panel g1"><div class="ph"><div class="dot ${r.raidStatus.state&&r.raidStatus.state.toLowerCase()==='online'?'d-green':'d-red'}"></div><span class="ph-title">RAID ICMP — ${esc(r.raidStatus.state||'unknown')}</span><span class="ph-count">${r.raidStatus.hdds.length} HDD</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Porta</th><th>Modello</th><th>Seriale</th><th>Dimensione</th><th>Stato</th></tr></thead><tbody>${r.raidStatus.hdds.map(h=>{const ok=h.error==='None'&&h.available==='Yes';return`<tr><td class="dt">${esc(h.port)}</td><td>${esc(h.model||'—')}</td><td class="dt">${esc(h.serial||'—')}</td><td class="dt">${esc(h.size?h.size+' GB':'—')}</td><td><span class="sev ${ok?'so':'se'}">${ok?'OK':esc(h.error||'ERROR')}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
-  </div>
+  ${boardsHtml}
   <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>
   ${r.temps.length||r.voltages.length||r.fanSpeeds.length?`<div class="sec-label" style="margin-top:20px;">Snapshot Hardware</div>
   <div class="grid2">
@@ -1110,7 +1329,16 @@ function renderRaw(r){
     const more=lines.length>max?`<div style="padding:8px 14px;font-family:var(--mono);font-size:10px;color:var(--muted);">… ${lines.length-max} righe non mostrate</div>`:'';
     return`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">${title}</span><span class="ph-count">${lines.length} righe</span></div><div class="scroll-wrap" style="max-height:400px;"><div style="padding:8px 14px;">${shown.map(l=>`<div style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;border-bottom:1px solid rgba(26,34,50,.3);padding:2px 0;">${esc(l)}</div>`).join('')}${more}</div></div></div>`;
   };
-  const filesHtml=r.allNames.length?r.allNames.map(n=>`<div style="font-family:var(--mono);font-size:11px;color:var(--text);padding:6px 0;border-bottom:1px solid var(--border);">📄 ${esc(n)}</div>`).join(''):`<div class="empty">—</div>`;
+  // Si segnala quale file è stato usato per ogni ruolo: con i log ruotati
+  // (CommunicatorLog0/1/…) viene letto solo il più recente, ed è bene che si veda.
+  const used=new Map(r.usedFiles||[]);
+  const usedNames=new Set(used.values());
+  const skipped=new Set(r.skippedFiles||[]);
+  const tag=n=>{const base=n.replace(/.*\//,'');
+    if(skipped.has(base))return'<span class="sev sw">ARCHIVIO — non letto</span>';
+    if(usedNames.has(base))return'<span class="sev so">ANALIZZATO</span>';
+    return'<span class="sev si">NON USATO</span>';};
+  const filesHtml=r.allNames.length?r.allNames.map(n=>`<div style="display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--text);padding:6px 0;border-bottom:1px solid var(--border);">📄 <span style="flex:1">${esc(n)}</span>${tag(n)}</div>`).join(''):`<div class="empty">—</div>`;
   $('tab-raw').innerHTML=`
     <div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">File nell'archivio ZIP</span></div><div class="pb">${filesHtml}</div></div>
     ${mkPanel('ProjectorLog — ultime 300 righe',[...r.rawProjLines].slice(-300),300)}
