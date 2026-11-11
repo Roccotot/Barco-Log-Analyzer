@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="theme-color" content="#080b10">
 <title>Barco Log Analyzer</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -115,6 +115,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 
 /* ── PANEL ── */
 .panel{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:0}
+.panel.g1,.analysis-list.g1{margin-bottom:16px}/* .panel azzera il margine: g1 deve vincere */
 .ph{background:rgba(255,255,255,.02);border-bottom:1px solid var(--border);padding:9px 14px;display:flex;align-items:center;gap:8px}
 .ph-title{font-family:var(--mono);font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--accent)}
 .ph-count{margin-left:auto;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:2px;background:rgba(0,200,240,.07);color:var(--accent);border:1px solid rgba(0,200,240,.15)}
@@ -142,7 +143,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .tbl td.dt{color:var(--muted);white-space:nowrap}
 .tbl td.hi{color:var(--white)}
 .tbl td.msg{font-size:11px}
-.scroll-wrap{max-height:360px;overflow-y:auto}
+.scroll-wrap{max-height:360px;overflow:auto;-webkit-overflow-scrolling:touch}
 .scroll-wrap::-webkit-scrollbar{width:3px}
 .scroll-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
 
@@ -206,6 +207,13 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .tbl th.sortable:hover{color:var(--accent)}
 .tbl th.sort-asc::after{content:' ▲';color:var(--accent);font-size:9px}
 .tbl th.sort-desc::after{content:' ▼';color:var(--accent);font-size:9px}
+
+/* ── FILTRO ── */
+[hidden]{display:none!important}
+.flt{margin-left:auto;width:150px;max-width:40%;background:var(--bg);border:1px solid var(--border2);border-radius:2px;color:var(--text);font-family:var(--mono);font-size:11px;padding:3px 8px;outline:none}
+.flt:focus{border-color:var(--accent)}
+.flt+.ph-count{margin-left:8px}
+.rawl{font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;border-bottom:1px solid rgba(26,34,50,.3);padding:2px 0;word-break:break-all}
 
 /* ── MISC ── */
 .empty{text-align:center;padding:28px 16px;font-family:var(--mono);font-size:11px;color:var(--muted)}
@@ -313,6 +321,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
 .pulse-rings>div:nth-child(2){animation-delay:1s}
 .pulse-rings>div:nth-child(3){animation-delay:2s}
 @keyframes ring-out{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.14);opacity:0}}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
 
 /* ── PRINT / PDF EXPORT ── */
 .print-tab-header{display:none}
@@ -328,6 +339,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
   .panel{break-inside:avoid;background:#fff;border:1px solid #ccc}
   .ph{background:#f4f6f8;border-bottom:1px solid #ccc}
   .kpi-card{background:#f4f6f8;border:1px solid #ccc}
+  .flt{display:none}
   .print-tab-header{display:block;font-family:var(--sans);font-size:20px;font-weight:700;color:#111;padding:10px 0 6px;border-bottom:2px solid #333;margin-bottom:14px;letter-spacing:1px}
 }
 </style>
@@ -451,15 +463,20 @@ const $=id=>document.getElementById(id);
 
   for(let i=0;i<70;i++){pts.push(new P());}
 
+  // L'animazione gira solo sulla schermata di caricamento: nei risultati si ferma
+  // (prima continuava a ridisegnare il canvas a vuoto, consumando batteria sul
+  // telefono). Con "riduci movimento" attivo nel sistema non parte affatto.
+  const reduce=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let raf=0;
   function loop(){
-    cx.clearRect(0,0,W,H);
     const us=$('upload-screen');
-    if(us&&us.style.display!=='none'){
-      pts.forEach(p=>{p.tick();p.draw();});
-    }
-    requestAnimationFrame(loop);
+    if(!us||us.style.display==='none'){cx.clearRect(0,0,W,H);raf=0;return;}
+    cx.clearRect(0,0,W,H);
+    pts.forEach(p=>{p.tick();p.draw();});
+    raf=requestAnimationFrame(loop);
   }
-  loop();
+  window.particlesResume=()=>{if(!reduce&&!raf)raf=requestAnimationFrame(loop);};
+  window.particlesResume();
 })();
 
 const _MO={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
@@ -494,6 +511,28 @@ function sortTh(th){
   });
   rows.forEach(r=>tbody.appendChild(r));
 }
+// Casella di ricerca nell'intestazione di un pannello: filtra righe di tabella e
+// righe di log raw del pannello stesso.
+const fltInput=()=>`<input class="flt" type="search" placeholder="Filtra…" aria-label="Filtra righe" oninput="filterPanel(this)">`;
+// I log raw ne mostrano solo le ultime righe: il filtro cerca nell'intero log in
+// memoria e ridisegna le corrispondenze, altrimenti righe più vecchie sfuggirebbero.
+const RAW={};const RAW_MAX=500;
+function rawRows(lines,q){
+  const hit=q?lines.filter(l=>l.toLowerCase().includes(q)):lines;
+  const shown=hit.slice(-RAW_MAX);
+  const note=hit.length>RAW_MAX?`<div class="ks" style="padding:4px 0 8px;">… ${hit.length-RAW_MAX} righe precedenti non mostrate${q?' (affinare il filtro)':''}</div>`
+    :q&&!hit.length?`<div class="empty">Nessuna riga contiene "${esc(q)}"</div>`:'';
+  return note+shown.map(l=>`<div class="rawl">${esc(l)}</div>`).join('');
+}
+function filterPanel(inp){
+  const q=inp.value.trim().toLowerCase();
+  const panel=inp.closest('.panel');
+  const body=panel.querySelector('.rawbody');
+  if(body){body.innerHTML=rawRows(RAW[body.dataset.raw]||[],q);return;}
+  panel.querySelectorAll('tbody tr').forEach(el=>{
+    el.hidden=!!q&&!el.textContent.toLowerCase().includes(q);
+  });
+}
 const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 function setProgress(p,m){$('prog-fill').style.width=p+'%';$('prog-msg').textContent=m}
@@ -503,7 +542,7 @@ function showScreen(id){
     el.style.display=(s===id)?(id==='progress-screen'?'flex':'block'):'none';
   });
 }
-function appReset(){$('file-input').value='';showScreen('upload-screen')}
+function appReset(){$('file-input').value='';showScreen('upload-screen');window.particlesResume&&window.particlesResume()}
 function exportPDF(){
   const labels={'tab-overview':'Overview','tab-errors':'Errori','tab-lamp':'Lampada','tab-device':'Dispositivo','tab-communicator':'Communicator','tab-raw':'Log Raw'};
   const model=$('tb-model').textContent.trim();
@@ -566,15 +605,21 @@ async function load(file){
     ];
     // I log ruotati di Barco usano un suffisso numerico crescente col passare del tempo:
     // CommunicatorLog0 è il più recente, CommunicatorLog1 quello archiviato prima.
-    // Teniamo quindi il suffisso più basso (0 = corrente) e scartiamo gli archivi.
+    // Per i ruoli a file singolo si tiene il suffisso più basso (0 = corrente).
+    // I CommunicatorLog invece si leggono tutti: sono il log del PC del tecnico e
+    // contengono le sessioni con ogni proiettore collegato; quelle di QUESTO
+    // proiettore possono trovarsi anche negli archivi.
     const rotIdx=l=>{const m=/(\d+)\.[a-z]+$/.exec(l);return m?+m[1]:-1;};
     const picked={};// ruolo -> {name, rot}
+    const commFiles=[];
     files.rotatedSkipped=[];
     for(const name of files.allNames){
       const low=name.toLowerCase().replace(/.*\//,'');
       const role=ROLES.find(([,t])=>t(low));
       if(!role)continue;
-      const rot=rotIdx(low),cur=picked[role[0]];
+      const rot=rotIdx(low);
+      if(role[0]==='commLog'){commFiles.push({name,rot});continue;}
+      const cur=picked[role[0]];
       if(!cur||rot<cur.rot){
         if(cur)files.rotatedSkipped.push(cur.name.replace(/.*\//,''));
         picked[role[0]]={name,rot};
@@ -584,6 +629,18 @@ async function load(file){
       files[role]=await zip.files[name].async('string');
       files[role+'Name']=name.replace(/.*\//,'');
     }
+    // Dal più vecchio (suffisso più alto) al più recente, così le sessioni sono in ordine.
+    commFiles.sort((a,b)=>b.rot-a.rot);
+    files.commLogs=[];
+    for(const{name}of commFiles){
+      setProgress(25,'Lettura '+name.replace(/.*\//,'')+'…');
+      files.commLogs.push({name:name.replace(/.*\//,''),text:await zip.files[name].async('string')});
+    }
+    // Data di generazione del pacchetto, dal nome file che il Communicator assegna
+    // (diagnostics_<modello>_<seriale>_AAAA-MM-GGThhmmss.zip): serve ad assegnare
+    // l'anno ai timestamp syslog, che non lo riportano.
+    const fd=/(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})(\d{2}))?/.exec(file.name||'');
+    if(fd)files.packageDate=new Date(+fd[1],+fd[2]-1,+fd[3],+(fd[4]||12),+(fd[5]||0));
     setProgress(40,'Parsing log…');await tick();
     const r=analyze(files);
     setProgress(85,'Generazione report…');await tick();
@@ -652,22 +709,20 @@ function parseXmlItems(xml,tag){
 
 // ══ ANALYZE ══
 function analyze(files){
-  // Anno estratto dal CommunicatorLog (formato ISO), usato per arricchire i timestamp del ProjectorLog (syslog, senza anno)
-  const logYearM=files.commLog?/(\d{4})-\d{2}-\d{2}/.exec(files.commLog):null;
-  const logYear=logYearM?logYearM[1]:null;
 
   const r={
     device:{},fw:{},cfe:{},
     lamp:{runtime:'—',desc:'—',article:'—'},
     lamp2:null,// dual lamp (Serie E)
     critEvents:[],errEvents:[],warnEvents:[],
-    commEvents:[],lampSessions:[],lampHistory:[],
+    commEvents:[],lampSessions:[],lampHistory:[],codeHistory:[],
     activeErrors:[],// parsed Error_messages.txt
     bootCount:0,dowserFails:0,i2cTimeouts:0,lampCritOff:0,
     lampOnFails:0,rtcFails:0,ntpIssues:0,powerInterruptions:0,
     commWarnCount:0,commErrCount:0,
     allNames:files.allNames||[],
-    usedFiles:Object.keys(files).filter(k=>k.endsWith('Name')).map(k=>[k.slice(0,-4),files[k]]),
+    usedFiles:[...Object.keys(files).filter(k=>k.endsWith('Name')).map(k=>[k.slice(0,-4),files[k]]),
+      ...(files.commLogs||[]).map(c=>['commLog',c.name])],
     skippedFiles:files.rotatedSkipped||[],
     versionCats:[],temps:[],voltages:[],fanSpeeds:[],
     raidStatus:null,laserHours:null,lps:null,boards:null,
@@ -824,6 +879,7 @@ function analyze(files){
   r.hasActiveErrors=r.activeErrors.length>0;
 
   // ProjectorLog
+  const yearSeq=[];// righe con orologio valido, per ricostruire l'anno
   if(files.projLog){
     const lines=parseLines(files.projLog);
     r.rawProjLines=lines.filter(l=>l.trim()&&l!=='[LOG]');
@@ -835,6 +891,7 @@ function analyze(files){
       // DP3000 uses a completely different log format
       const p=r.isDP3000?parseDP3000Line(line):parseProjLine(line);
       if(!p)continue;
+      if(!/^(Dec 31 1[67]:|Jan  1 0[01]:)/.test(p.dt))yearSeq.push(p);
       // Boot detection: dp80/dp60 (C/B series), dp61 (S/E/SLP series)
       // syslogd counted separately as fallback only
       if(p.msg.includes('starting application')&&/^dp(80|61|60)$/.test(p.proc))r.bootCount++;
@@ -845,7 +902,11 @@ function analyze(files){
       // Skip kernel boot noise: Jan 1 00: (Serie S) or Dec 31 17:00: (older DP2K pre-NTP epoch, all procs)
       // Also skip kernel messages with uptime < 1s prefix "[ 0." (always boot-time noise, any date)
       // Also skip dnsd "accepting UDP packets" (daemon startup, not a real error)
-      const isBootNoise=(p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond'||p.proc==='portmap'))||p.dt.startsWith('Dec 31 17:00:')||(p.proc==='kernel'&&/^\[\s*0\./.test(p.msg))||(p.proc==='dnsd'&&ml.includes('accepting udp packets'));
+      const isBootNoise=(p.dt.startsWith('Jan  1 00:')&&(p.proc==='kernel'||p.proc==='syslogd'||p.proc==='dnsd'||p.proc==='crond'||p.proc==='portmap'))||p.dt.startsWith('Dec 31 17:00:')||(p.proc==='kernel'&&/^\[\s*0\./.test(p.msg))||(p.proc==='dnsd'&&ml.includes('accepting udp packets'))
+        // crond segnala lo scatto dell'orologio da 1969 all'ora reale a ogni avvio
+        // ("time disparity of 29539959 minutes", ~56 anni): è rumore di boot. Uno
+        // scarto piccolo (minuti/ore) resta invece un avviso vero.
+        ||(p.proc==='crond'&&+(/time disparity of (\d+) minutes/.exec(p.msg)||[])[1]>525600);
       if(lvl==='crit'||lvl==='emerg'){
         if(!isBootNoise)r.critEvents.push(p);
         if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
@@ -877,14 +938,14 @@ function analyze(files){
         if(open)open.repeats++;
         else open={start:ev,repeats:0};
       }else if(open){
-        r.lampSessions.push({dt:open.start.dt,end:ev.dt,dur:minDiff(open.start.dt,ev.dt),
+        r.lampSessions.push({idx:open.start.idx,dt:open.start.dt,end:ev.dt,dur:minDiff(open.start.dt,ev.dt),
           repeats:open.repeats,
           crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.idx<ev.idx&&c.msg.toLowerCase().includes('lamp'))});
         open=null;
       }
     }
     // Sessione ancora aperta a fine log: la lampada risultava accesa.
-    if(open)r.lampSessions.push({dt:open.start.dt,end:null,dur:null,repeats:open.repeats,open:true,
+    if(open)r.lampSessions.push({idx:open.start.idx,dt:open.start.dt,end:null,dur:null,repeats:open.repeats,open:true,
       crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.msg.toLowerCase().includes('lamp'))});
     r.lampOnCommands=lampEvents.filter(e=>e.on).length;
     r.lampSessionsTotal=r.lampSessions.length;
@@ -892,25 +953,79 @@ function analyze(files){
     r.lampSessions=r.lampSessions.slice(-50);
   }
 
-  // CommunicatorLog
-  if(files.commLog){
-    const lines=parseLines(files.commLog);
-    r.rawCommLines=lines.filter(l=>l.trim()).slice(0,2000);
-    for(const line of lines){
-      const m=/^(INFO|WARN|ERROR|DEBUG)\s+([\d\-\s:]+?)\s*:\s*(.+)$/.exec(line.replace(/\r/g,''));
-      if(!m)continue;
-      const[,lvl,dt,msgRaw]=m;
-      const msg=msgRaw.trim().replace(/^"|"$/g,'');
-      if(lvl==='WARN')r.commWarnCount++;
-      if(lvl==='ERROR')r.commErrCount++;
-      if((lvl==='WARN'||lvl==='ERROR')&&!msg.includes('Object::connect')&&!msg.includes('unregisterTimer')){
-        if(msg.includes('lamp')&&msg.includes('failed'))r.lampOnFails++;
-        if(msg.includes('clock adjustment'))r.ntpIssues++;
-        if(msg.includes('lamp')||msg.includes('tamper')||msg.includes('clock')||msg.includes('NTP')||msg.includes('timeout')||msg.includes('failed')||lvl==='ERROR')
-          r.commEvents.push({lvl,dt:dt.trim(),msg});
+  // ── CommunicatorLog ──
+  // Attenzione: è il log del PC su cui gira il Communicator, non del proiettore.
+  // Contiene le sessioni con TUTTI i proiettori collegati nel periodo (sale e
+  // cinema diversi). Ogni sessione si apre con una riga
+  //   ConnectToDestination  "ETHERNET,10.55.76.22,43680,43728"
+  // e da lì in poi le righe riguardano quel proiettore, fino alla connessione
+  // successiva. Si tengono solo le sessioni con l'IP di questo proiettore:
+  // senza questo filtro avvisi e conteggi venivano da altre sale.
+  r.comm={scope:'none',projIp:(r.device.ip||'').trim(),sessions:[],others:[],files:(files.commLogs||[]).length};
+  if(files.commLogs&&files.commLogs.length){
+    const projIp=r.comm.projIp;
+    const hasMarkers=files.commLogs.some(c=>c.text.includes('ConnectToDestination'));
+    // Senza marcatori (Communicator vecchi) o senza IP non si può separare: si usa
+    // tutto il log, ma la UI avvisa che può includere altri proiettori.
+    r.comm.scope=hasMarkers&&projIp&&projIp!=='—'?'session':'all';
+    const others=new Map();// destinazione -> n. sessioni
+    const codeMap=new Map();// codice -> riepilogo
+    let dest=null,mine=r.comm.scope==='all',sess=null,lastTs=null;
+    for(const{text}of files.commLogs){
+      for(const line of parseLines(text)){
+        const m=/^(INFO|WARN|ERROR|DEBUG)\s+(\d{4}-\d{2}-\d{2}\s+[\d:]+)\s*:\s*(.*)$/.exec(line);
+        if(!m)continue;
+        const[,lvl,dtRaw,msgRaw]=m;const dt=dtRaw.trim();lastTs=dt;
+        const cm=/ConnectToDestination\s+"([A-Z]+),([^,"]+)/.exec(msgRaw);
+        if(cm&&r.comm.scope==='session'){
+          const addr=cm[2].trim();
+          if(addr===projIp){
+            // Riconnessioni allo stesso proiettore restano nella stessa sessione.
+            if(dest!==projIp){sess={start:dt,end:dt};r.comm.sessions.push(sess);}
+            mine=true;
+          }else{
+            mine=false;sess=null;
+            const k=cm[1]==='SERIAL'?'porta seriale '+addr:addr;
+            if(dest!==addr)others.set(k,(others.get(k)||0)+1);
+          }
+          dest=addr;
+        }
+        // Il login è del PC (avvio del Communicator), non di una sessione.
+        if(/Communicator credentials/.test(msgRaw)){const c=/credentials\s+"([^"]+)"/.exec(msgRaw);if(c)r.device.techLogin=c[1];}
+        if(!mine)continue;
+        if(sess)sess.end=dt;
+        r.rawCommLines.push(line);
+        if(lvl==='WARN')r.commWarnCount++;
+        if(lvl==='ERROR')r.commErrCount++;
+        // Eventi codificati del proiettore: "0 " "E\t5646\tlamp - set lamp on failed".
+        // A ogni connessione il Communicator riporta l'elenco degli errori attivi in quel
+        // momento, quindi è lo storico di Error_messages.txt (che è solo la foto attuale).
+        const ce=/"\d+\s*"\s+"([EWN])\t(\d+)\t([^"]*)"/.exec(msgRaw);
+        if(ce){
+          const[,sv,code,txt]=ce;
+          let g=codeMap.get(code);
+          if(!g){g={code,sev:sv==='E'?'ERROR':sv==='W'?'WARN':'INFO',msg:txt.trim(),first:dt,last:dt,seen:new Set()};codeMap.set(code,g);}
+          g.last=dt;g.seen.add(dt.slice(0,16));
+          continue;
+        }
+        if(lvl!=='WARN'&&lvl!=='ERROR')continue;
+        const msg=msgRaw.trim().replace(/^"|"$/g,'');
+        if(msg.includes('Object::connect')||msg.includes('unregisterTimer')||msg.includes('QAbstractSocket'))continue;
+        const ml=msg.toLowerCase();
+        if(/lamp|light source/.test(ml)&&/fail/.test(ml))r.lampOnFails++;
+        if(ml.includes('clock adjustment'))r.ntpIssues++;
+        if(/lamp|tamper|clock|ntp|timeout|fail/.test(ml)||lvl==='ERROR')r.commEvents.push({lvl,dt,msg});
       }
-      if(!r.device.cinema&&msg.includes('credentials')){const c=/"([^"]+)"/.exec(msg);if(c)r.device.cinema=c[1];}
     }
+    r.comm.others=[...others.entries()].sort((a,b)=>b[1]-a[1]);
+    r.comm.lastTs=lastTs;
+    // Storico codici, con indicazione se l'errore è ancora attivo adesso.
+    const activeCodes=new Set(r.activeErrors.map(e=>e.code).filter(Boolean));
+    r.codeHistory=[...codeMap.values()].map(g=>({code:g.code,sev:g.sev,msg:g.msg,first:g.first,last:g.last,
+      count:g.seen.size,active:activeCodes.has(g.code)}))
+      .sort((a,b)=>({ERROR:0,WARN:1,INFO:2}[a.sev]-{ERROR:0,WARN:1,INFO:2}[b.sev])||b.last.localeCompare(a.last));
+    // Le righe raw mostrate sono le più recenti.
+    if(r.rawCommLines.length>3000)r.rawCommLines=r.rawCommLines.slice(-3000);
   }
   // LampHistoryLogFile — lamp replacement history (Serie S)
   if(files.lampHistory){
@@ -1039,14 +1154,29 @@ function analyze(files){
     if(lsm||ttm)r.laserHours={lightOn:lsm?+lsm[1]:null,total:ttm?+ttm[1]:null};
   }
 
-  // Arricchisci i timestamp del ProjectorLog con l'anno estratto dal CommLog
-  if(logYear){
-    const ey=e=>({...e,dt:logYear+' '+e.dt});
-    r.critEvents=r.critEvents.map(ey);
-    r.errEvents=r.errEvents.map(ey);
-    r.warnEvents=r.warnEvents.map(ey);
-    r.lampSessions=r.lampSessions.map(s=>({...s,dt:logYear+' '+s.dt}));
+  // Anno dei timestamp del ProjectorLog (syslog, senza anno). Si parte dalla data di
+  // generazione del pacchetto (nome file, altrimenti ultima riga del CommunicatorLog)
+  // e si risale il log all'indietro: quando il mese "torna su" di molto (gennaio ->
+  // dicembre) si è passati all'anno precedente. Prima si usava un solo anno per
+  // tutto il log, sbagliato per i log a cavallo di capodanno.
+  let ref=files.packageDate||null;
+  if(!ref&&r.comm&&r.comm.lastTs){const t=/(\d{4})-(\d{2})-(\d{2})/.exec(r.comm.lastTs);if(t)ref=new Date(+t[1],+t[2]-1,+t[3]);}
+  r.packageDate=ref;
+  const yearOf=new Map();
+  if(ref){
+    let y=ref.getFullYear(),next=ref.getMonth();
+    for(let i=yearSeq.length-1;i>=0;i--){
+      const mo=_MO[yearSeq[i].dt.slice(0,3).toLowerCase()];
+      if(mo==null)continue;// DP3000: data già completa
+      if(mo-next>=6)y--;
+      next=mo;yearOf.set(yearSeq[i].idx,y);
+    }
   }
+  const ey=e=>yearOf.has(e.idx)?{...e,dt:yearOf.get(e.idx)+' '+e.dt}:e;
+  r.critEvents=r.critEvents.map(ey);
+  r.errEvents=r.errEvents.map(ey);
+  r.warnEvents=r.warnEvents.map(ey);
+  r.lampSessions=r.lampSessions.map(ey);
   return r;
 }
 
@@ -1131,6 +1261,18 @@ function buildAnalysis(r){
   const activeNote=r.activeErrors.filter(e=>e.sev==='INFO');
   if(activeNote.length)items.push(['ao',`ℹ Notifiche attive — ${activeNote.length}`,activeNote.map(e=>`${e.code?'['+e.code+'] ':''}${e.msg}`).join(' • ')]);
 
+  // Storico codici dalle sessioni Communicator con QUESTO proiettore.
+  const hist=r.codeHistory||[];
+  const past=hist.filter(h=>!h.active&&h.sev!=='INFO');
+  if(past.length)items.push(['aw',`⚠ Errori registrati in passato, ora risolti — ${past.length}`,
+    past.map(h=>`[${h.code}] ${h.msg} (ultimo: ${h.last.slice(0,10)})`).join(' • ')+`. Non più attivi, ma utili per capire problemi intermittenti.`]);
+  const allMsgs=[...hist.map(h=>({msg:h.msg,active:h.active})),...r.activeErrors.map(e=>({msg:e.msg,active:true}))];
+  const tamper=allMsgs.filter(m=>/tamper/i.test(m.msg));
+  if(tamper.length)items.push([tamper.some(m=>m.active)?'ac':'aw',`${tamper.some(m=>m.active)?'🔴':'⚠'} Eventi tamper di sicurezza`,
+    `Il proiettore ha registrato apertura di sportelli o scollegamento della parte sicura (${[...new Set(tamper.map(m=>m.msg))].join(' • ')}). Dopo un tamper di "marriage" il proiettore non riproduce contenuti cifrati finché un tecnico certificato non rifà il marriage.`]);
+  if(allMsgs.some(m=>/clock adjustment out of budget/i.test(m.msg)))items.push(['aw',`⚠ Correzione orologio sicuro fuori budget`,
+    `Il proiettore non ha applicato la correzione automatica dell'ora perché supera il margine annuale consentito dalla sicurezza DCI. Con l'orologio sfasato le KDM possono risultare non ancora valide o già scadute ai margini della finestra: verificare il server NTP e l'ora del proiettore.`]);
+
   // Diagnostica dall'alimentatore lampada (LPSLogFile).
   if(r.lps){
     const ms=r.lps.mainsStats;
@@ -1165,8 +1307,20 @@ function renderErrors(r){
     ${brow('RTC failed',r.rtcFails,maxC,'#ffd740,#f9a825')}
     ${brow('Lamp on fail',r.lampOnFails,maxC,'#ff8c00,#e65100')}
   </div></div></div>`;
+  // Messaggi ricorrenti: lo stesso errore ripetuto decine di volte (es. timeout i2c)
+  // si legge meglio come una riga con il conteggio. Numeri e indirizzi esadecimali
+  // vengono normalizzati per raggruppare le varianti dello stesso messaggio.
+  const groups=new Map();
+  for(const e of all){
+    const k=e.lbl+'|'+e.proc+'|'+e.msg.replace(/0x[0-9a-f]+/gi,'#').replace(/\d+/g,'#');
+    let g=groups.get(k);
+    if(!g){g={cls:e.cls,lbl:e.lbl,proc:e.proc,msg:e.msg,n:0,first:e.dt,last:e.dt};groups.set(k,g);}
+    g.n++;g.last=e.dt;
+  }
+  const rec=[...groups.values()].filter(g=>g.n>1).sort((a,b)=>b.n-a.n).slice(0,20);
+  const recHtml=rec.length?`<div class="panel g1"><div class="ph"><div class="dot d-ora"></div><span class="ph-title">Messaggi Ricorrenti</span><span class="ph-count">${rec.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Volte</th><th class="sortable" onclick="sortTh(this)">Processo</th><th class="sortable" onclick="sortTh(this)">Messaggio</th><th class="sortable" onclick="sortTh(this)">Prima</th><th class="sortable" onclick="sortTh(this)">Ultima</th></tr></thead><tbody>${rec.map(g=>`<tr><td><span class="sev ${g.cls}">${g.lbl}</span></td><td class="hi">${g.n}</td><td class="dt">${esc(g.proc)}</td><td class="hi" style="font-size:11px;">${esc(g.msg)}</td><td class="dt">${esc(g.first)}</td><td class="dt">${esc(g.last)}</td></tr>`).join('')}</tbody></table></div></div>`:'';
   const rows=all.length?all.map(e=>`<tr><td><span class="sev ${e.cls}">${e.lbl}</span></td><td class="dt">${esc(e.dt)}</td><td class="dt">${esc(e.proc)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join(''):`<tr><td colspan="4"><div class="empty"><span class="sev so">OK</span> &nbsp;Nessun errore</div></td></tr>`;
-  $('tab-errors').innerHTML=`${barsHtml}<div class="panel"><div class="ph"><div class="dot ${all.length?'d-red':'d-green'}"></div><span class="ph-title">Tutti gli Errori — ProjectorLog</span><span class="ph-count">${all.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Processo</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  $('tab-errors').innerHTML=`${barsHtml}${recHtml}<div class="panel"><div class="ph"><div class="dot ${all.length?'d-red':'d-green'}"></div><span class="ph-title">Tutti gli Errori — ProjectorLog</span>${fltInput()}<span class="ph-count">${all.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Data</th><th class="sortable" onclick="sortTh(this)">Processo</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 function brow(label,count,max,grad){const p=max>0?Math.round(count/max*100):0;return `<div class="bar-row"><span class="bar-label">${label}</span><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:linear-gradient(90deg,${grad})">${count}</div></div></div>`;}
 
@@ -1265,7 +1419,7 @@ function renderDevice(r){
         <div class="ic"><div class="ik">Button 2</div>${iv(d.btn2)}</div>
         <div class="ic"><div class="ik">CLO Key</div>${iv(d.cloKey,'valid','not valid')}</div>
         <div class="ic"><div class="ik">SNMP</div>${iv(d.snmp)}</div>
-        <div class="ic"><div class="ik">Cinema</div>${iv(d.cinema)}</div>
+        <div class="ic"><div class="ik">Login Communicator</div>${iv(d.techLogin)}</div>
         <div class="ic"><div class="ik">CFE IP</div>${iv(d.cfeIp)}</div>
       </div>
     </div>
@@ -1310,24 +1464,41 @@ function renderDevice(r){
 
 // ── Communicator ──
 function renderComm(r){
+  const c=r.comm||{scope:'none',sessions:[],others:[]};
+  // Da quale parte del log del PC vengono i dati di questa scheda.
+  let scopeHtml='';
+  if(c.scope==='session'&&c.sessions.length){
+    scopeHtml=`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Sessioni con questo proiettore — ${esc(c.projIp)}</span><span class="ph-count">${c.sessions.length}</span></div><div class="pb">
+      <div class="ks" style="font-size:12px;line-height:1.6;margin-bottom:8px;">Il CommunicatorLog è il log del PC del tecnico e registra tutti i proiettori collegati. Qui si analizzano solo le sessioni con l'IP di questo proiettore${c.others.length?`; sono esclusi ${c.others.length} altri collegamenti`:''}.</div>
+      ${c.sessions.map(x=>`<div class="lrow"><span class="lr-dt" style="min-width:150px">${esc(x.start)}</span><span style="color:var(--muted)">→ ${esc(x.end.slice(11))}</span></div>`).join('')}
+      ${c.others.length?`<details style="margin-top:10px;"><summary class="ks" style="cursor:pointer;">Collegamenti esclusi (${c.others.length})</summary><div style="margin-top:6px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;">${c.others.map(([k,n])=>`${esc(k)} <span style="opacity:.6">×${n}</span>`).join(' · ')}</div></details>`:''}
+    </div></div>`;
+  }else if(c.scope==='session'){
+    scopeHtml=`<div class="analysis-list g1"><div class="acard ao"><strong>ℹ Nessuna sessione con questo proiettore nel log del PC</strong>Il CommunicatorLog contiene solo collegamenti ad altri proiettori (${c.others.length}), quindi nessun evento viene attribuito a ${esc(c.projIp)}.</div></div>`;
+  }else if(c.scope==='all'){
+    scopeHtml=`<div class="analysis-list g1"><div class="acard aw"><strong>⚠ Log non separabile per proiettore</strong>Il CommunicatorLog non riporta le connessioni${c.projIp&&c.projIp!=='—'?'':' o l\'IP del proiettore è sconosciuto'}: i dati sotto possono riguardare anche altri proiettori collegati dallo stesso PC.</div></div>`;
+  }
+  const hist=r.codeHistory||[];
+  const histHtml=hist.length?`<div class="panel g1"><div class="ph"><div class="dot ${hist.some(h=>h.active&&h.sev==='ERROR')?'d-red':hist.some(h=>h.sev==='ERROR')?'d-ora':'d-blue'}"></div><span class="ph-title">Storico Codici Errore</span><span class="ph-count">${hist.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Sev.</th><th class="sortable" onclick="sortTh(this)">Codice</th><th class="sortable" onclick="sortTh(this)">Messaggio</th><th class="sortable" onclick="sortTh(this)">Stato</th><th class="sortable" onclick="sortTh(this)">Prima</th><th class="sortable" onclick="sortTh(this)">Ultima</th><th class="sortable" onclick="sortTh(this)">Rilev.</th></tr></thead><tbody>${hist.map(h=>`<tr><td><span class="sev ${h.sev==='ERROR'?'se':h.sev==='WARN'?'sw':'si'}">${h.sev}</span></td><td class="dt">${esc(h.code)}</td><td class="hi" style="font-size:11px;">${esc(h.msg)}</td><td><span class="sev ${h.active?(h.sev==='ERROR'?'sc':'sw'):'so'}">${h.active?'ATTIVO':'RISOLTO'}</span></td><td class="dt">${esc(h.first)}</td><td class="dt">${esc(h.last)}</td><td>${h.count}</td></tr>`).join('')}</tbody></table></div><div class="ks" style="padding:8px 14px;">A ogni connessione il proiettore riporta gli errori attivi in quel momento. "Attivo" = presente anche in Error_messages.txt; "Rilev." = connessioni in cui è stato visto.</div></div>`:'';
   const rows=r.commEvents.length?r.commEvents.map(e=>`<tr><td><span class="sev ${e.lvl==='ERROR'?'se':'sw'}">${e.lvl}</span></td><td class="dt">${esc(e.dt)}</td><td class="hi" style="font-size:11px;">${esc(e.msg.replace(/\\t/g,' ').replace(/^0\s+/,''))}</td></tr>`).join(''):`<tr><td colspan="3"><div class="empty">Nessun warning/errore rilevante</div></td></tr>`;
   $('tab-communicator').innerHTML=`
+  ${scopeHtml}
   <div class="kpi-strip">
     <div class="kpi ${r.commWarnCount>0?'kw':'ko'}"><div class="kl">Warning</div><div class="kv">${r.commWarnCount}</div><div class="ks">righe WARN</div></div>
     <div class="kpi ${r.commErrCount>0?'kc':'ko'}"><div class="kl">Error</div><div class="kv">${r.commErrCount}</div><div class="ks">righe ERROR</div></div>
     <div class="kpi ${r.lampOnFails>0?'kor':'ko'}"><div class="kl">Lamp Fail</div><div class="kv">${r.lampOnFails}</div><div class="ks">accensioni fallite</div></div>
     <div class="kpi ${r.ntpIssues>0?'kw':'ko'}"><div class="kl">NTP Issues</div><div class="kv">${r.ntpIssues}</div><div class="ks">clock sync</div></div>
   </div>
-  <div class="panel"><div class="ph"><div class="dot ${r.commErrCount>0?'d-red':r.commWarnCount>0?'d-yel':'d-green'}"></div><span class="ph-title">Warning &amp; Errori Rilevanti</span><span class="ph-count">${r.commEvents.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Livello</th><th class="sortable" onclick="sortTh(this)">Data/Ora</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  ${histHtml}
+  <div class="panel"><div class="ph"><div class="dot ${r.commErrCount>0?'d-red':r.commWarnCount>0?'d-yel':'d-green'}"></div><span class="ph-title">Warning &amp; Errori Rilevanti</span>${fltInput()}<span class="ph-count">${r.commEvents.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Livello</th><th class="sortable" onclick="sortTh(this)">Data/Ora</th><th class="sortable" onclick="sortTh(this)">Messaggio</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 // ── Raw ──
 function renderRaw(r){
-  const mkPanel=(title,lines,max)=>{
-    if(!lines||!lines.length)return`<div class="panel g1"><div class="ph"><span class="ph-title">${title}</span></div><div class="pb"><div class="empty">File non presente</div></div></div>`;
-    const shown=lines.slice(0,max);
-    const more=lines.length>max?`<div style="padding:8px 14px;font-family:var(--mono);font-size:10px;color:var(--muted);">… ${lines.length-max} righe non mostrate</div>`:'';
-    return`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">${title}</span><span class="ph-count">${lines.length} righe</span></div><div class="scroll-wrap" style="max-height:400px;"><div style="padding:8px 14px;">${shown.map(l=>`<div style="font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.6;border-bottom:1px solid rgba(26,34,50,.3);padding:2px 0;">${esc(l)}</div>`).join('')}${more}</div></div></div>`;
+  const mkPanel=(title,key,lines,empty='File non presente')=>{
+    if(!lines||!lines.length)return`<div class="panel g1"><div class="ph"><span class="ph-title">${title}</span></div><div class="pb"><div class="empty">${empty}</div></div></div>`;
+    RAW[key]=lines;
+    return`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">${title}</span>${fltInput()}<span class="ph-count">${lines.length} righe</span></div><div class="scroll-wrap" style="max-height:400px;"><div class="rawbody" data-raw="${key}" style="padding:8px 14px;">${rawRows(lines,'')}</div></div></div>`;
   };
   // Si segnala quale file è stato usato per ogni ruolo: con i log ruotati
   // (CommunicatorLog0/1/…) viene letto solo il più recente, ed è bene che si veda.
@@ -1341,8 +1512,9 @@ function renderRaw(r){
   const filesHtml=r.allNames.length?r.allNames.map(n=>`<div style="display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--text);padding:6px 0;border-bottom:1px solid var(--border);">📄 <span style="flex:1">${esc(n)}</span>${tag(n)}</div>`).join(''):`<div class="empty">—</div>`;
   $('tab-raw').innerHTML=`
     <div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">File nell'archivio ZIP</span></div><div class="pb">${filesHtml}</div></div>
-    ${mkPanel('ProjectorLog — ultime 300 righe',[...r.rawProjLines].slice(-300),300)}
-    ${mkPanel('CommunicatorLog — prime 500 righe',r.rawCommLines.slice(0,500),500)}`;
+    ${mkPanel('ProjectorLog',"proj",r.rawProjLines)}
+    ${mkPanel(r.comm&&r.comm.scope==='session'?'CommunicatorLog — sessioni con questo proiettore':'CommunicatorLog',"comm",r.rawCommLines,
+      r.comm&&r.comm.scope==='session'?'Nessuna sessione con questo proiettore nel log del PC':'File non presente')}`;
 }
 </script>
 </body>
