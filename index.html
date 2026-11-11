@@ -403,6 +403,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
     <button class="tab" data-tab="lamp">Lampada</button>
     <button class="tab" data-tab="device">Dispositivo</button>
     <button class="tab" data-tab="communicator">Communicator</button>
+    <button class="tab" data-tab="icmp" id="tab-btn-icmp" hidden>ICMP</button>
     <button class="tab" data-tab="raw">Log Raw</button>
   </div>
   <div class="content">
@@ -411,6 +412,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15
     <div class="tab-pane" id="tab-lamp"></div>
     <div class="tab-pane" id="tab-device"></div>
     <div class="tab-pane" id="tab-communicator"></div>
+    <div class="tab-pane" id="tab-icmp"></div>
     <div class="tab-pane" id="tab-raw"></div>
   </div>
 </div>
@@ -544,14 +546,14 @@ function showScreen(id){
 }
 function appReset(){$('file-input').value='';showScreen('upload-screen');window.particlesResume&&window.particlesResume()}
 function exportPDF(){
-  const labels={'tab-overview':'Overview','tab-errors':'Errori','tab-lamp':'Lampada','tab-device':'Dispositivo','tab-communicator':'Communicator','tab-raw':'Log Raw'};
+  const labels={'tab-overview':'Overview','tab-errors':'Errori','tab-lamp':'Lampada','tab-device':'Dispositivo','tab-communicator':'Communicator','tab-icmp':'ICMP','tab-raw':'Log Raw'};
   const model=$('tb-model').textContent.trim();
   const serial=$('tb-serial').textContent.trim();
   const prev=document.title;
   document.title='Barco Log Analyzer'+(model&&model!=='—'?' — '+model:'')+(serial?' ('+serial+')':'');
   const headers=[];
   Object.entries(labels).forEach(([id,label])=>{
-    const pane=$(id);if(!pane)return;
+    const pane=$(id);if(!pane||!pane.innerHTML)return;
     const h=document.createElement('div');h.className='print-tab-header';h.textContent=label;
     pane.prepend(h);headers.push(h);
   });
@@ -601,6 +603,10 @@ async function load(file){
       ['speeds',     l=>/^speeds\.txt$/.test(l)],
       ['hardwareInfo',l=>/hardware_info/.test(l)],
       ['icmpRaid',   l=>/icmpraidsinfo|icmpraidinfo/.test(l)],
+      ['icmpSyslog', l=>/^icmpsyslog/.test(l)],
+      ['icmpVersion',l=>/^icmpversioninfo/.test(l)],
+      ['icmpSettings',l=>/^icmpsettings/.test(l)],
+      ['icmpLicense',l=>/^icmplicenseinfo/.test(l)],
       ['runtimes',   l=>/^runtimes\.txt$/.test(l)],
     ];
     // I log ruotati di Barco usano un suffisso numerico crescente col passare del tempo:
@@ -670,6 +676,9 @@ function xmlTag(xml,tag){
   return m?m[1]:null;
 }
 const xmlTagAttr=(xml,tag,attr)=>xmlAttr(xmlTag(xml,tag),attr);
+// Nasconde le credenziali negli URL (ftp://utente:password@host): i file ICMP le
+// contengono in chiaro e non devono comparire a schermo né nel PDF.
+const maskUrl=t=>t.indexOf('://')<0?t:t.replace(/(\b[a-z]+:\/\/[^:\/@\s]+):[^@\s\/]+@/gi,'$1:***@');
 
 function parseProjLine(line){
   // Supports both DP4K/DP2K (simple hostname) and Serie S (DP2K-10Sx-SERIAL with hyphens)
@@ -725,7 +734,7 @@ function analyze(files){
       ...(files.commLogs||[]).map(c=>['commLog',c.name])],
     skippedFiles:files.rotatedSkipped||[],
     versionCats:[],temps:[],voltages:[],fanSpeeds:[],
-    raidStatus:null,laserHours:null,lps:null,boards:null,
+    raidStatus:null,laserHours:null,lps:null,boards:null,icmp:null,rawIcmpLines:[],
     rawProjLines:[],rawCommLines:[],
     isSerieS:false,isDP3000:false,isLaser:false
   };
@@ -897,7 +906,7 @@ function analyze(files){
       if(p.msg.includes('starting application')&&/^dp(80|61|60)$/.test(p.proc))r.bootCount++;
       if(p.proc==='syslogd'&&p.msg.toLowerCase().includes('started'))r._syslogStarts=(r._syslogStarts||0)+1;
       // Power interruption events (Serie S/E ipid daemon)
-      if(p.proc==='ipid'&&p.msg.toLowerCase().includes('power interruption'))r.powerInterruptions++;
+      if(p.proc==='ipid'&&p.msg.toLowerCase().includes('power interruption')){r.powerInterruptions++;lampEvents.push({p,cut:true});}
       const lvl=p.level;const ml=p.msg.toLowerCase();
       // Skip kernel boot noise: Jan 1 00: (Serie S) or Dec 31 17:00: (older DP2K pre-NTP epoch, all procs)
       // Also skip kernel messages with uptime < 1s prefix "[ 0." (always boot-time noise, any date)
@@ -909,7 +918,8 @@ function analyze(files){
         ||(p.proc==='crond'&&+(/time disparity of (\d+) minutes/.exec(p.msg)||[])[1]>525600);
       if(lvl==='crit'||lvl==='emerg'){
         if(!isBootNoise)r.critEvents.push(p);
-        if(ml.includes('lamp was switched off')||ml.includes('turn lamp off'))r.lampCritOff++;
+        // Serie S/laser: "light source - the light source was switched off due to an error".
+        if(ml.includes('lamp was switched off')||ml.includes('turn lamp off')||ml.includes('light source was switched off'))r.lampCritOff++;
       }else if(lvl==='err'||lvl==='error'){
         if(!isBootNoise)r.errEvents.push(p);
         if(ml.includes('dowser')&&ml.includes('failed'))r.dowserFails++;
@@ -920,9 +930,21 @@ function analyze(files){
       }
       // Lamp ON: classic "set lamp on" or Serie S "set light on"
       const isLampOn=(ml.includes('set lamp on')||ml.includes('set light on'))&&!ml.includes('already on')&&!ml.includes('failed')&&!ml.includes('interval');
-      const isLampOff=(ml.includes('set lamp off')||ml.includes('set light off'))&&!ml.includes('already off');
+      // Spegnimento: comando esplicito, oppure deciso dal sistema (anche per errore),
+      // oppure stato "lamp turn off" riportato dalle lampade USHIO (Serie E).
+      // I "toggle light on/off" si ignorano: sono sempre seguiti, nello stesso
+      // secondo, dal comando risolto (set light on/off), già contato qui.
+      const isLampOff=((ml.includes('set lamp off')||ml.includes('set light off'))&&!ml.includes('already off'))
+        ||/system - turn (?:light|lamp) off|switched off due to an error|ushio operating status = lamp turn off/.test(ml);
       if(isLampOn)lampEvents.push({p,on:true});
       else if(isLampOff)lampEvents.push({p,on:false});
+      // "interval time not expired": il comando lampada appena dato è stato rifiutato
+      // (riaccensione/spegnimento troppo ravvicinati), quindi non ha cambiato stato.
+      if(ml.includes('interval time not expired')){
+        const last=lampEvents[lampEvents.length-1];
+        if(last&&!last.cut&&p.idx-last.p.idx<=3)lampEvents.pop();
+      }
+
     }
     // Fallback boot count via syslogd (use only when dp-start events not found, or for Serie S)
     const syslogStarts=r._syslogStarts||0;
@@ -932,12 +954,30 @@ function analyze(files){
     // a ogni spettacolo anche quando la lampada è già accesa, quindi un comando ON non
     // equivale a una sessione. Una sessione va dal primo ON dopo uno spegnimento fino
     // all'OFF successivo; gli ON ripetuti nel mezzo vengono contati a parte.
-    let open=null;
-    for(const{p:ev,on}of lampEvents){
+    // "input power interruption" (ipid, Serie S/E) è l'ultima riga prima di ogni
+    // mancanza di alimentazione. Conta lo stato della lampada in quel momento: tolta
+    // la corrente a lampada accesa, o appena spenta, manca il raffreddamento.
+    const HOT_MIN=10;
+    let open=null,lastOff=null;
+    r.power={cuts:r.powerInterruptions,withLamp:[],hot:[]};
+    for(const{p:ev,on,cut}of lampEvents){
+      if(cut){
+        if(open){
+          r.power.withLamp.push(ev.dt);
+          r.lampSessions.push({idx:open.start.idx,dt:open.start.dt,end:ev.dt,dur:minDiff(open.start.dt,ev.dt),
+            repeats:open.repeats,cut:true,crit:false});
+          open=null;
+        }else if(lastOff){
+          const m=minDiff(lastOff.dt,ev.dt);
+          if(m!=null&&m<=HOT_MIN)r.power.hot.push({dt:ev.dt,min:m});
+        }
+        lastOff=null;continue;
+      }
       if(on){
         if(open)open.repeats++;
         else open={start:ev,repeats:0};
       }else if(open){
+        lastOff=ev;
         r.lampSessions.push({idx:open.start.idx,dt:open.start.dt,end:ev.dt,dur:minDiff(open.start.dt,ev.dt),
           repeats:open.repeats,
           crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.idx<ev.idx&&c.msg.toLowerCase().includes('lamp'))});
@@ -948,6 +988,7 @@ function analyze(files){
     if(open)r.lampSessions.push({idx:open.start.idx,dt:open.start.dt,end:null,dur:null,repeats:open.repeats,open:true,
       crit:r.critEvents.some(c=>c.idx>open.start.idx&&c.msg.toLowerCase().includes('lamp'))});
     r.lampOnCommands=lampEvents.filter(e=>e.on).length;
+    r.power.boots=r.bootCount;
     r.lampSessionsTotal=r.lampSessions.length;
     // In timeline si mostrano solo le sessioni più recenti, non le più vecchie.
     r.lampSessions=r.lampSessions.slice(-50);
@@ -959,36 +1000,62 @@ function analyze(files){
   // cinema diversi). Ogni sessione si apre con una riga
   //   ConnectToDestination  "ETHERNET,10.55.76.22,43680,43728"
   // e da lì in poi le righe riguardano quel proiettore, fino alla connessione
-  // successiva. Si tengono solo le sessioni con l'IP di questo proiettore:
-  // senza questo filtro avvisi e conteggi venivano da altre sale.
-  r.comm={scope:'none',projIp:(r.device.ip||'').trim(),sessions:[],others:[],files:(files.commLogs||[]).length};
+  // successiva. L'IP da solo non basta: indirizzi come 192.168.1.134 sono usati
+  // da decine di proiettori in sale diverse. Dopo la connessione il Communicator
+  // registra il seriale ("stringSerialNumber....... "1190129028""), che è
+  // l'identificativo affidabile. Una sessione è di questo proiettore se:
+  //  - il seriale coincide (anche se l'IP era diverso, o la connessione seriale);
+  //  - oppure non riporta seriale, ha l'IP del proiettore e quell'IP non è mai
+  //    stato visto con un seriale diverso.
+  const projSerial=(r.device.serial||'').trim();
+  r.comm={scope:'none',projIp:(r.device.ip||'').trim(),projSerial,sessions:[],others:[],files:(files.commLogs||[]).length,
+    verified:0,sameIp:[]};
   if(files.commLogs&&files.commLogs.length){
     const projIp=r.comm.projIp;
     const hasMarkers=files.commLogs.some(c=>c.text.includes('ConnectToDestination'));
-    // Senza marcatori (Communicator vecchi) o senza IP non si può separare: si usa
-    // tutto il log, ma la UI avvisa che può includere altri proiettori.
-    r.comm.scope=hasMarkers&&projIp&&projIp!=='—'?'session':'all';
+    // Senza marcatori (Communicator vecchi) o senza IP/seriale non si può separare:
+    // si usa tutto il log, ma la UI avvisa che può includere altri proiettori.
+    const haveId=(projIp&&projIp!=='—')||(projSerial&&projSerial!=='—');
+    r.comm.scope=hasMarkers&&haveId?'session':'all';
+    // 1° passaggio: per ogni sessione, destinazione e seriale riportato.
+    const sDest=[],sSer=[];
+    if(r.comm.scope==='session'){
+      let k=-1;
+      for(const{text}of files.commLogs){
+        const re=/ConnectToDestination\s+"([A-Z]+),([^,"]+)|stringSerialNumber\.+\s*"([^"]*)"/g;let mm;
+        while((mm=re.exec(text))!==null){
+          if(mm[2]!==undefined){k++;sDest[k]=(mm[1]==='SERIAL'?'porta seriale ':'')+mm[2].trim();}
+          else if(k>=0&&mm[3]&&sSer[k]===undefined)sSer[k]=mm[3].trim();
+        }
+      }
+    }
+    const ipConflict=sDest.some((d,k)=>d===projIp&&sSer[k]&&sSer[k]!==projSerial);
+    const isMine=k=>sSer[k]?sSer[k]===projSerial:(sDest[k]===projIp&&!ipConflict);
+    const sameIp=new Set();
+    sDest.forEach((d,k)=>{if(d===projIp&&sSer[k]&&sSer[k]!==projSerial)sameIp.add(sSer[k]);});
+    r.comm.sameIp=[...sameIp];
+    // 2° passaggio: analisi delle sole righe delle sessioni attribuite.
     const others=new Map();// destinazione -> n. sessioni
     const codeMap=new Map();// codice -> riepilogo
-    let dest=null,mine=r.comm.scope==='all',sess=null,lastTs=null;
+    let k=-1,mine=r.comm.scope==='all',sess=null,lastTs=null,prevMine=false;
     for(const{text}of files.commLogs){
       for(const line of parseLines(text)){
         const m=/^(INFO|WARN|ERROR|DEBUG)\s+(\d{4}-\d{2}-\d{2}\s+[\d:]+)\s*:\s*(.*)$/.exec(line);
         if(!m)continue;
         const[,lvl,dtRaw,msgRaw]=m;const dt=dtRaw.trim();lastTs=dt;
-        const cm=/ConnectToDestination\s+"([A-Z]+),([^,"]+)/.exec(msgRaw);
-        if(cm&&r.comm.scope==='session'){
-          const addr=cm[2].trim();
-          if(addr===projIp){
-            // Riconnessioni allo stesso proiettore restano nella stessa sessione.
-            if(dest!==projIp){sess={start:dt,end:dt};r.comm.sessions.push(sess);}
-            mine=true;
+        if(r.comm.scope==='session'&&msgRaw.includes('ConnectToDestination')){
+          k++;
+          mine=isMine(k);
+          if(mine){
+            // Riconnessioni consecutive allo stesso proiettore restano una sessione.
+            if(!prevMine){sess={start:dt,end:dt,dest:sDest[k],verified:!!sSer[k]};r.comm.sessions.push(sess);}
+            else if(sSer[k])sess.verified=true;
           }else{
-            mine=false;sess=null;
-            const k=cm[1]==='SERIAL'?'porta seriale '+addr:addr;
-            if(dest!==addr)others.set(k,(others.get(k)||0)+1);
+            sess=null;
+            const key=sDest[k]+(sSer[k]?' (S/N '+sSer[k]+')':'');
+            others.set(key,(others.get(key)||0)+1);
           }
-          dest=addr;
+          prevMine=mine;
         }
         // Il login è del PC (avvio del Communicator), non di una sessione.
         if(/Communicator credentials/.test(msgRaw)){const c=/credentials\s+"([^"]+)"/.exec(msgRaw);if(c)r.device.techLogin=c[1];}
@@ -1018,6 +1085,7 @@ function analyze(files){
       }
     }
     r.comm.others=[...others.entries()].sort((a,b)=>b[1]-a[1]);
+    r.comm.verified=r.comm.sessions.filter(x=>x.verified).length;
     r.comm.lastTs=lastTs;
     // Storico codici, con indicazione se l'errore è ancora attivo adesso.
     const activeCodes=new Set(r.activeErrors.map(e=>e.code).filter(Boolean));
@@ -1106,17 +1174,22 @@ function analyze(files){
   }
 
   // Vita utile attesa della lampada. Il valore fisso di 2000h non vale per tutti i
-  // modelli: su questo proiettore lo storico mostra lampade da 3000-6000h. Quando il
-  // LampHistoryLogFile è disponibile si usa la mediana delle lampade già sostituite
-  // (la mediana ignora i casi anomali, es. una lampada resa dopo poche ore).
-  const LAMP_LIFE_DEFAULT=2000;
+  // modelli (sul DP2K-19B di esempio le lampade durano 3000-6000h), quindi quando
+  // possibile si usa la mediana delle lampade già sostituite su questo proiettore.
+  // Si contano solo lampade dello STESSO codice articolo dell'attuale (lo storico
+  // spesso mescola modelli diversi, es. 2 kW e 3 kW) e con almeno 100 ore: sotto
+  // sono installazioni, reset o lampade rese subito. Servono almeno 3 campioni,
+  // altrimenti si resta sul riferimento generico.
+  const LAMP_LIFE_DEFAULT=2000,MIN_SAMPLES=3,MIN_HOURS=100;
   r.lampStats={expected:LAMP_LIFE_DEFAULT,source:'default',samples:0,last:null,avgStrikes:null};
   if(r.lampHistory.length){
-    const hrs=r.lampHistory.map(l=>{
+    const curArt=(r.lamp.article||'').trim();
+    const hrs=r.lampHistory.filter(l=>l.article===curArt).map(l=>{
       const m=/^(\d+):(\d+)/.exec(l.runtime||'');
       return m?+m[1]+ +m[2]/60:null;
-    }).filter(h=>h!=null&&h>0);
-    if(hrs.length){
+    }).filter(h=>h!=null&&h>=MIN_HOURS);
+    r.lampStats.otherTypes=r.lampHistory.filter(l=>l.article&&l.article!=='?'&&l.article!==curArt).length;
+    if(hrs.length>=MIN_SAMPLES){
       const sorted=[...hrs].sort((a,b)=>a-b),mid=sorted.length>>1;
       const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
       r.lampStats.expected=Math.round(median);
@@ -1147,6 +1220,162 @@ function analyze(files){
     r.raidStatus={state:rm?rm[1]:'unknown',error:re?re[1]:'',hdds};
   }
 
+  // ── ICMP (Integrated Cinema Media Processor) ──
+  // Il media server integrato (Serie S/E/SLP) ha un proprio syslog, separato da
+  // quello del proiettore, con storage, riproduzione, ingest e KDM.
+  if(files.icmpSyslog||files.icmpVersion||files.icmpSettings||files.icmpRaid){
+    const ic={host:null,extracted:null,lines:0,boots:0,issues:[],other:[],smart:[],parity:null,
+      version:null,versionCats:[],settings:null,licenses:[]};
+    r.icmp=ic;
+    if(files.icmpSyslog){
+      const lines=parseLines(files.icmpSyslog);
+      // Intestazione: "++++ log from host icmp-592633 extracted on Fri Nov 24 08:26:39 UTC 2023 ++++"
+      const hd=/log from host (\S+) extracted on \w{3} (\w{3})\s+(\d+) ([\d:]+) \S+ (\d{4})/.exec(lines[0]||'');
+      if(hd){ic.host=hd[1];const mo=_MO[hd[2].toLowerCase()];if(mo!=null)ic.extracted=new Date(+hd[5],mo,+hd[3]);}
+      // Regole per i guasti riconoscibili. Ogni regola diventa una voce con conteggio,
+      // prima/ultima occorrenza e un esempio. Le soglie dei conteggi sono volutamente
+      // basse: anche pochi errori di storage meritano un controllo.
+      const RULES=[
+        {id:'sd',sev:'ac',title:'Errori sulla scheda SD interna dell\'ICMP',
+          re:/mmcblk\d+: error|I\/O error, dev mmcblk|Buffer I\/O error on dev mmcblk|FAT-fs \(mmcblk/,
+          advice:'La scheda SD interna (~4 GB) restituisce errori di lettura/scrittura. Una SD che si degrada può impedire l\'avvio dell\'ICMP o il salvataggio delle impostazioni: valutarne la sostituzione.'},
+        // Errori disco: lo stesso messaggio vale per lo storage interno e per un disco
+        // USB di ingest. Si distingue dall'host SCSI del dispositivo (vedi sotto).
+        {id:'io',sev:'ac',title:'Errori I/O sullo storage dei contenuti',
+          re:/I\/O error,? (?:on )?dev(?:ice)? sd[a-z]|ata\d+(?:\.\d+)?: (?:failed command|exception Emask|COMRESET failed|hard resetting link|reset failed|revalidation failed)|Emask 0x\w+ \(timeout\)|EXT[34]-fs \(sd[a-z]\d*\).*I\/O error|EXT[34]-fs error \(device sd|EXT[34]-fs \(sd[a-z]\d*\): Remounting filesystem read-only|Aborting journal on device sd|JBD2: Error|disk I\/O error/,
+          advice:'Il volume dei contenuti ha restituito errori di lettura o il collegamento SATA si è dovuto reinizializzare. Controllare lo SMART dei dischi, i cavi/backplane e lo stato del RAID.'},
+        {id:'usb',sev:'aw',title:'Errori su un disco USB/esterno',re:/$^/,
+          advice:'Errori su un\'unità esterna collegata all\'ICMP (tipicamente il disco di ingest): è un problema di quel disco, non dello storage interno.'},
+        {id:'read',sev:'ac',title:'Errori di lettura dei contenuti in riproduzione',
+          re:/MXF.*read frame \d+ error|File read error|assets read error|bad content integrity/,
+          advice:'Possibili salti o fermi immagine in sala. Verificare l\'integrità dei DCP coinvolti (controllo hash) e lo storage.'},
+        {id:'write',sev:'ac',title:'Lo storage non accetta scritture (ingest, KDM, playlist)',
+          re:/Ingest\b.*failed|unable to open database|Copy failed|local storage not available|error writing file/,
+          advice:'Ingest e importazione KDM falliscono: storage pieno, in sola lettura o RAID non montato. Verificare spazio libero e stato del RAID.'},
+        {id:'raid',sev:'ac',title:'RAID degradato o in ricostruzione',
+          re:/RAID array is degraded|RAID degraded|RAID is degraded|RAID is rebuilding|rebuild paused|RAID controller configuration read failed|RaidAdapter Error|Failed to retrieve disk information/,
+          advice:'Con un disco fuori dal RAID un secondo guasto comporta la perdita dei contenuti. Identificare il disco e sostituirlo.'},
+        {id:'light',sev:'aw',title:'Luce spenta durante la riproduzione',
+          re:/light off while playing|dark screen event: projector light is off/,
+          advice:'L\'ICMP ha visto la sorgente luminosa spegnersi a spettacolo in corso: confrontare con gli eventi lampada del ProjectorLog alle stesse ore (gli orari ICMP sono in UTC).'},
+        {id:'macro',sev:'aw',title:'L\'ICMP non riesce a comandare il proiettore',
+          re:/Macro \[[^\]]*\] execution error|the request could not be sent/,
+          advice:'Le macro dell\'automazione non arrivano al proiettore: verificare la comunicazione interna ICMP–proiettore e le macro configurate.'},
+        {id:'kdm',sev:'aw',title:'Problemi con le KDM',
+          re:/addKdm\(\) error|KDM.*(?:invalid|expired|failed)|no valid key found/i,
+          advice:'KDM non importate o mancanti per un CPL al momento della riproduzione: controllare l\'esempio (storage non disponibile, formato non valido, chiave assente o scaduta).'},
+        {id:'tamper',sev:'ac',title:'Tamper: l\'ICMP ha bloccato la riproduzione',
+          re:/tamper\b.*cannot play|Insertion tamper detected/i,
+          advice:'Apertura dello sportello di servizio o reinserimento della scheda ICMP: finché la condizione non viene risolta (marriage) il contenuto cifrato non viene riprodotto.'},
+        {id:'ntp',sev:'aw',title:'Server NTP non raggiungibile dall\'ICMP',
+          re:/ntpdate \[[^\]]*\] failed/,
+          advice:'L\'ICMP non riesce a sincronizzare l\'ora. A lungo andare l\'orologio sicuro deriva e le KDM possono risultare non valide ai margini: verificare server NTP e rete.'},
+        {id:'snmp',sev:'ao',title:'Crash del servizio SNMP dell\'ICMP',
+          re:/process snmp has crashed/,
+          advice:'Il servizio SNMP si riavvia da solo: incide solo sul monitoraggio remoto (es. TMS/NOC), non sulla riproduzione.'},
+      ];
+      // Rumore noto: messaggi registrati come errore ma normali (avvio, servizi di rete,
+      // banner). Il timeout della Video Mezzanine compare ~5 volte nei primi minuti di
+      // ogni avvio prima che la scheda risponda, quindi non è un guasto.
+      const NOISE=/^(?:ifplugd|avahi-daemon|ntpd|snmp-subagent)|kernel:\s*(?:PCI|pci |pcieport|Freescale FM|\/soc@|mpc\d+xx|genirq|serial\d|PCIE ERR_CAP|UDF-fs|random:|sd [\d:]+: \[sd[a-z]\] (?:Assuming drive cache|No Caching mode))|syslog: (?:\*{5,}|\/usr\/bin\/snmp|snmp|\[0x|\/(?:usr\/)?lib)|snmp process has stopped|Video WM settings|It is not a smpte content|mezzanine|vmcClient|CPLD - bootloader WD|Projector model id failed|read status failed on|ContentDb- delete|kernel:\.{3,}ready/i;
+      // Host SCSI -> tipo (ahci = SATA interno, usb-storage = disco esterno) e
+      // dispositivo -> host, aggiornati man mano: i nomi sdX cambiano tra un avvio e l'altro.
+      const hostType={},devHost={};
+      const hit=new Map(),other=new Map(),smart={};let curHdd=null;
+      const seq=[];
+      for(let i=0;i<lines.length;i++){
+        const m=/^(\w{3}\s+\d+\s+[\d:]{8})\s+\S+\s+([a-z]+)\.([a-z]+)\s+(.*)$/.exec(lines[i]);
+        if(!m)continue;
+        const[,dt,,lvl,body]=m;ic.lines++;
+        const ev={idx:i,dt,lvl,body};
+        if(!/^Jan  1 0[01]:/.test(dt))seq.push(ev);
+        if(/CPLD - System started/.test(body))ic.boots++;
+        // SMART: "Checking SMART for HDD2" seguito dagli attributi di quel disco.
+        let sm=/Checking SMART for HDD(\d+)/.exec(body);
+        if(sm){curHdd='HDD'+sm[1];continue;}
+        sm=/SMART attribute (Reallocated Sectors Count|Current Pending Sector Count|Uncorrectable Sector Count) RAW = ([0-9a-fA-F]+)/.exec(body);
+        if(sm&&curHdd){(smart[curHdd]||={})[sm[1]]=parseInt(sm[2],16);smart[curHdd].ev=ev;continue;}
+        const pm=/Image DataPath errors detected during play, on red = (\d+), on green = (\d+), on blue = (\d+)/.exec(body);
+        if(pm){ic.parity={r:+pm[1],g:+pm[2],b:+pm[3],ev};continue;}
+        let hm=/scsi host(\d+): (\S+)/.exec(body);if(hm)hostType[hm[1]]=hm[2];
+        hm=/\bsd (\d+):\d+:\d+:\d+: \[(sd[a-z])\]/.exec(body);if(hm)devHost[hm[2]]=hm[1];
+        let rule=RULES.find(x=>x.re.test(body));
+        if(rule&&rule.id==='io'){
+          const dv=/\b(sd[a-z])\d*\b/.exec(body);
+          if(dv&&hostType[devHost[dv[1]]]==='usb-storage')rule=RULES.find(x=>x.id==='usb');
+        }
+        if(rule){
+          let h=hit.get(rule.id);
+          if(!h){h={...rule,count:0,first:ev,last:ev};hit.set(rule.id,h);}
+          h.count++;h.last=ev;continue;
+        }
+        if(!/^(?:err|crit|alert|emerg)$/.test(lvl)||NOISE.test(body))continue;
+        const k=body.replace(/\[\d+\]/g,'').replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi,'<id>').replace(/0x[0-9a-f]+/gi,'#').replace(/\d+/g,'#');
+        let g=other.get(k);
+        if(!g){g={lvl,msg:body,count:0,first:ev,last:ev};other.set(k,g);}
+        g.count++;g.last=ev;
+      }
+      // Anni: dalla data di estrazione nell'intestazione, altrimenti da quella del pacchetto.
+      const years=yearMap(seq,ic.extracted||files.packageDate||null);
+      const fmt=ev=>ev?(years.has(ev.idx)?years.get(ev.idx)+' ':'')+ev.dt:'';
+      const scale=h=>h.sev==='ac'&&h.count<10&&/^(?:sd|io)$/.test(h.id)?'aw':h.sev;
+      ic.issues=[...hit.values()].map(h=>({id:h.id,sev:scale(h),title:h.title,advice:h.advice,count:h.count,
+        first:fmt(h.first),last:fmt(h.last),example:maskUrl(h.first.body)}));
+      ic.other=[...other.values()].sort((a,b)=>b.count-a.count).slice(0,30)
+        .map(g=>({lvl:g.lvl,msg:maskUrl(g.msg),count:g.count,first:fmt(g.first),last:fmt(g.last)}));
+      ic.smart=Object.entries(smart).sort().map(([hdd,v])=>({hdd,realloc:v['Reallocated Sectors Count']??null,
+        pending:v['Current Pending Sector Count']??null,uncorr:v['Uncorrectable Sector Count']??null,last:fmt(v.ev)}));
+      if(ic.parity)ic.parity.last=fmt(ic.parity.ev);
+      r.rawIcmpLines=lines.filter(l=>l.trim()).map(maskUrl);
+    }
+    // Versioni software ICMP: <package name vs><category name><file displayname name vs/>
+    if(files.icmpVersion){
+      const v=files.icmpVersion;
+      const pk=/<package\s+name="([^"]*)"\s+vs="([^"]*)"/i.exec(v);if(pk)ic.version=pk[2];
+      const catRe=/<category\s+name="([^"]+)"\s*>([\s\S]*?)<\/category\s*>/gi;let cm;
+      while((cm=catRe.exec(v))!==null){
+        const items=[];const ir=/<file\b([^>]*)\/?>/gi;let im;
+        while((im=ir.exec(cm[2]))!==null){
+          const a=im[1],g=n=>(new RegExp('\\b'+n+'="([^"]*)"').exec(a)||[])[1];
+          if(g('vs'))items.push({name:g('name')||'',display:g('displayname')||g('name')||'',vs:g('vs')});
+        }
+        if(items.length)ic.versionCats.push({cat:'icmp — '+cm[1],items});
+      }
+    }
+    // Impostazioni: rete, orologio, storage remoti, utenti. Le credenziali FTP negli URL
+    // degli storage e gli hash delle password NON vengono mai mostrati (finirebbero
+    // anche nel PDF esportato).
+    if(files.icmpSettings){
+      const x=files.icmpSettings,st={adapters:[],storages:[],users:[]};
+      st.tz=xmlTagAttr(x,'ZoneInfo','Name');
+      st.ntp=xmlTagAttr(x,'Server','URL');
+      st.clockSync=xmlTagAttr(x,'SystemClock','SyncSource');
+      st.secureClock=xmlTagAttr(x,'SecureClock','AdjustmentSource');
+      const ad=/<(MediaAdapter\d+)>([\s\S]*?)<\/\1>/gi;let am;
+      while((am=ad.exec(x))!==null){
+        st.adapters.push({name:am[1].replace('MediaAdapter','Media '),
+          dhcp:xmlTagAttr(am[2],'IsDhcpEnabled','Value'),ip:xmlTagAttr(am[2],'FixedIp','IpAddress'),
+          mask:xmlTagAttr(am[2],'FixedIp','Subnet'),mtu:xmlTagAttr(am[2],'FixedIp','MTU')});
+      }
+      const rs=/<RemoteStorage\s+Name="([^"]*)"\s+Url="([^"]*)"/gi;let rm;
+      while((rm=rs.exec(x))!==null){
+        const u=/^(\w+):\/\/(?:[^@/]*@)?([^/:]+)/.exec(rm[2]);
+        st.storages.push({name:rm[1],proto:u?u[1].toUpperCase():'',host:u?u[2]:''});
+      }
+      const us=/<User\s+UserName="([^"]*)"[^>]*\bRole="([^"]*)"/gi;let um;
+      while((um=us.exec(x))!==null)st.users.push({name:um[1],role:um[2].replace(/^USER_/,'').replace(/_/g,' ').toLowerCase()});
+      st.cues=(x.match(/<Event\s+Source="USER_CUE"/g)||[]).length;
+      ic.settings=st;
+    }
+    if(files.icmpLicense){
+      const lr=/<License\b([^>]*)\/?>/gi;let lm;
+      while((lm=lr.exec(files.icmpLicense))!==null){
+        const a=lm[1],g=n=>(new RegExp('\\b'+n+'="([^"]*)"','i').exec(a)||[])[1];
+        ic.licenses.push({name:g('Name')||g('Feature')||g('Type')||'—',expiry:g('ExpirationDate')||g('Expiry')||g('ValidUntil')||''});
+      }
+    }
+  }
+
   // Runtimes.txt (Laser projectors — DP2K-SLP etc.)
   if(files.runtimes){
     const lsm=/<runtime[^>]*name="light on"[^>]*value="(\d+)"/i.exec(files.runtimes);
@@ -1162,22 +1391,30 @@ function analyze(files){
   let ref=files.packageDate||null;
   if(!ref&&r.comm&&r.comm.lastTs){const t=/(\d{4})-(\d{2})-(\d{2})/.exec(r.comm.lastTs);if(t)ref=new Date(+t[1],+t[2]-1,+t[3]);}
   r.packageDate=ref;
-  const yearOf=new Map();
-  if(ref){
-    let y=ref.getFullYear(),next=ref.getMonth();
-    for(let i=yearSeq.length-1;i>=0;i--){
-      const mo=_MO[yearSeq[i].dt.slice(0,3).toLowerCase()];
-      if(mo==null)continue;// DP3000: data già completa
-      if(mo-next>=6)y--;
-      next=mo;yearOf.set(yearSeq[i].idx,y);
-    }
-  }
+  const yearOf=yearMap(yearSeq,ref);// DP3000: data già completa, nessun anno aggiunto
   const ey=e=>yearOf.has(e.idx)?{...e,dt:yearOf.get(e.idx)+' '+e.dt}:e;
   r.critEvents=r.critEvents.map(ey);
   r.errEvents=r.errEvents.map(ey);
   r.warnEvents=r.warnEvents.map(ey);
   r.lampSessions=r.lampSessions.map(ey);
   return r;
+}
+
+// Anno di ogni riga di un log syslog (che non lo riporta), risalendo dal fondo a
+// partire da una data di riferimento: quando il mese "torna su" di molto (gennaio
+// -> dicembre) si è passati all'anno precedente. seq: righe in ordine, con .idx e
+// .dt "Mon DD hh:mm:ss"; le righe con orologio non ancora impostato vanno escluse.
+function yearMap(seq,ref){
+  const map=new Map();
+  if(!ref)return map;
+  let y=ref.getFullYear(),next=ref.getMonth();
+  for(let i=seq.length-1;i>=0;i--){
+    const mo=_MO[seq[i].dt.slice(0,3).toLowerCase()];
+    if(mo==null)continue;
+    if(mo-next>=6)y--;
+    next=mo;map.set(seq[i].idx,y);
+  }
+  return map;
 }
 
 // Differenza in minuti fra due timestamp syslog "Mon DD HH:MM:SS" (senza anno).
@@ -1205,10 +1442,15 @@ function render(r){
   $('tb-serial').textContent='S/N: '+(d.serial||'—');
   $('tb-ip').textContent='IP: '+(d.ip||'—').trim();
   const sb=$('tb-status');
-  if(r.lampCritOff>0||r.dowserFails>3){sb.textContent='⚠ ATTENZIONE RICHIESTA';sb.className='badge b-crit';}
-  else if(r.critEvents.length+r.errEvents.length>0){sb.textContent='⚠ ANOMALIE PRESENTI';sb.className='badge b-warn';}
+  const icmpCrit=r.icmp&&r.icmp.issues.some(i=>i.sev==='ac');
+  if(r.lampCritOff>0||r.dowserFails>3||icmpCrit){sb.textContent='⚠ ATTENZIONE RICHIESTA';sb.className='badge b-crit';}
+  else if(r.critEvents.length+r.errEvents.length>0||(r.icmp&&r.icmp.issues.some(i=>i.sev==='aw'))){sb.textContent='⚠ ANOMALIE PRESENTI';sb.className='badge b-warn';}
   else{sb.textContent='✓ LOG PULITO';sb.className='badge b-green';}
-  renderOverview(r);renderErrors(r);renderLamp(r);renderDevice(r);renderComm(r);renderRaw(r);
+  // Scheda ICMP solo se il pacchetto contiene file ICMP; ogni nuovo file riparte dall'Overview.
+  $('tab-btn-icmp').hidden=!r.icmp;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab==='overview'));
+  document.querySelectorAll('.tab-pane').forEach(x=>x.classList.toggle('active',x.id==='tab-overview'));
+  renderOverview(r);renderErrors(r);renderLamp(r);renderDevice(r);renderComm(r);renderIcmp(r);renderRaw(r);
 }
 
 // ── Overview ──
@@ -1219,7 +1461,7 @@ function renderOverview(r){
     {l:'Ore Lampada',v:r.lamp.runtime||'—',s:st.source==='storico'?`${st.pct}% di ${st.expected}h attesi`:r.lamp.desc,cls:st.pct>=90?'kc':st.pct>=75?'kw':'ko'},
     {l:'Shutdown Critici',v:r.lampCritOff,s:'lamp switched off',cls:r.lampCritOff>0?'kc':'ko'},
     {l:'Dowser Falliti',v:r.dowserFails,s:'set dowser open failed',cls:r.dowserFails>3?'kc':r.dowserFails>0?'kor':'ko'},
-    {l:'Interruzioni Alim.',v:r.powerInterruptions,s:'power interruption',cls:r.powerInterruptions>3?'kc':r.powerInterruptions>0?'kw':'ko'},
+    {l:'Interruzioni Alim.',v:r.powerInterruptions,s:r.power&&r.power.withLamp.length?`${r.power.withLamp.length} con lampada accesa`:'mancanza corrente',cls:r.power&&r.power.withLamp.length?'kc':r.power&&r.power.hot.length?'kw':r.powerInterruptions?'ki':'ko'},
     {l:'Boot Registrati',v:r.bootCount,s:'riavvii nel log',cls:'ki'},
   ];
   const kpiHtml=`<div class="kpi-strip">${kpis.map(k=>`<div class="kpi ${k.cls}"><div class="kl">${k.l}</div><div class="kv">${k.v}</div><div class="ks">${esc(k.s||'')}</div></div>`).join('')}</div>`;
@@ -1241,14 +1483,26 @@ function buildAnalysis(r){
   if(r.rtcFails>0)items.push(['aw',`⚠ RTC Read Failed (${r.rtcFails}×)`,`Il Real Time Clock non è stato letto correttamente al boot. Possibile batteria RTC scarica.`]);
   if(r.lampOnFails>0)items.push(['aw',`⚠ Lamp ON Failed (${r.lampOnFails}× nel Communicator)`,`Tentativi falliti di accensione lampada. Verificare lamphouse, connettori e alimentatore.`]);
   if(r.ntpIssues>3)items.push(['ao',`ℹ NTP / Orologio (${r.ntpIssues}×)`,`L'orologio del proiettore si discosta dall'NTP. Verificare configurazione server NTP.`]);
-  if(r.powerInterruptions>3)items.push(['ac',`🔴 Interruzioni di corrente frequenti (${r.powerInterruptions}×)`,`Il log registra ${r.powerInterruptions} interruzioni di alimentazione. Spegnimenti improvvisi danneggiano la lampada e la meccanica. Verificare l'alimentazione e valutare un UPS.`]);
-  else if(r.powerInterruptions>0)items.push(['aw',`⚠ Interruzioni di corrente rilevate (${r.powerInterruptions}×)`,`Rilevate ${r.powerInterruptions} interruzioni di rete. Monitorare la stabilità dell'alimentazione.`]);
+  // Mancanze di alimentazione: il numero da solo non dice molto (in molte sale il
+  // proiettore si spegne ogni sera dall'interruttore generale); conta in che stato
+  // era la lampada quando è mancata la corrente.
+  const pw=r.power;
+  if(pw&&pw.withLamp.length)items.push(['ac',`🔴 Corrente tolta con la lampada accesa (${pw.withLamp.length}×)`,
+    `Ultima volta: ${pw.withLamp[pw.withLamp.length-1]}. Senza spegnimento e raffreddamento la lampada si degrada più in fretta e l'elettronica subisce uno stress inutile. Spegnere sempre la lampada e attendere il raffreddamento prima di togliere alimentazione; se sono blackout, valutare un UPS.`]);
+  if(pw&&pw.hot.length)items.push(['aw',`⚠ Corrente tolta pochi minuti dopo lo spegnimento della lampada (${pw.hot.length}×)`,
+    `In ${pw.hot.length} casi l'alimentazione è mancata entro 10 minuti dallo spegnimento della lampada (es. ${pw.hot[pw.hot.length-1].dt}, dopo ${pw.hot[pw.hot.length-1].min} min), prima che il raffreddamento fosse completo.`]);
+  if(pw&&pw.cuts>0){
+    const routine=pw.boots>3&&pw.cuts>=pw.boots*.8;
+    items.push(['ao',`ℹ ${pw.cuts} spegnimenti per mancanza di alimentazione su ${pw.boots} avvii`,
+      routine?`Quasi ogni avvio segue un taglio di corrente: il proiettore viene spento dall'interruttore invece che dallo standby. È comune; l'importante è che la lampada sia spenta e raffreddata prima (vedi sopra).`
+      :`Il resto degli avvii è avvenuto dopo uno spegnimento ordinato. Se i tagli non sono voluti, verificare la stabilità della linea elettrica.`]);
+  }
   if(r.device.cloKey&&r.device.cloKey.toLowerCase()==='not valid')items.push(['aw',`⚠ CLO Key non valida`,`Il proiettore opera senza Constant Light Output. La luminosità non viene compensata nel tempo.`]);
   const lh=parseInt(r.lamp.runtime)||0;
   const st=r.lampStats||{expected:2000,source:'default',pct:0};
   const lifeNote=st.source==='storico'
-    ?`Riferimento: ${st.expected}h, mediana delle ${st.samples} lampade sostituite su questo proiettore.`
-    :`Riferimento generico ${st.expected}h: nel pacchetto non c'è lo storico sostituzioni.`;
+    ?`Riferimento: ${st.expected}h, mediana delle ${st.samples} lampade dello stesso modello sostituite su questo proiettore (${st.min}–${st.max}h).`
+    :`Riferimento generico ${st.expected}h: lo storico non ha abbastanza lampade dello stesso modello.`;
   if(st.pct>=90)items.push(['ac',`🔴 Lampada a fine vita (${r.lamp.runtime}h — ${st.pct}%)`,`Programmare la sostituzione. ${r.lamp.desc} — ${r.lamp.article}. ${lifeNote}`]);
   else if(st.pct>=75)items.push(['aw',`⚠ Ore lampada elevate (${r.lamp.runtime}h — ${st.pct}%)`,`Pianificare la sostituzione lampada. ${r.lamp.desc} — ${r.lamp.article}. ${lifeNote}`]);
   // Active errors from Error_messages.txt
@@ -1286,7 +1540,16 @@ function buildAnalysis(r){
     const badHdd=r.raidStatus.hdds.filter(h=>h.error&&h.error!=='None'&&h.available==='No');
     if(r.raidStatus.state&&r.raidStatus.state.toLowerCase()!=='online'||badHdd.length)
       items.push(['ac',`🔴 CRITICO — RAID ICMP: ${r.raidStatus.state||'unknown'}`,`${badHdd.length} disco/i in errore. Verificare subito l'integrità del RAID.`]);
-    else items.push(['ag',`✅ RAID ICMP Online`,`${r.raidStatus.hdds.length} dischi operativi.`]);
+    else items.push(['ag',`✅ RAID ICMP Online`,`${r.raidStatus.hdds.length} dischi operativi${r.icmp&&r.icmp.smart.length&&!r.icmp.smart.some(s=>(s.realloc||0)+(s.pending||0)+(s.uncorr||0)>0)?', SMART senza settori danneggiati':''}.`]);
+  }
+  // ICMP: ogni guasto critico ha la sua voce, gli avvisi sono riassunti in una.
+  if(r.icmp){
+    for(const i of r.icmp.issues.filter(x=>x.sev==='ac'))
+      items.push(['ac',`🔴 ICMP — ${i.title} (${i.count}×)`,`${i.advice} Ultima occorrenza: ${i.last} UTC.`]);
+    const w=r.icmp.issues.filter(x=>x.sev==='aw');
+    if(w.length)items.push(['aw',`⚠ ICMP — ${w.length} avvis${w.length>1?'i':'o'}`,w.map(i=>`${i.title} (${i.count}×)`).join(' • ')+'. Dettagli nella scheda ICMP.']);
+    const bad=r.icmp.smart.filter(s=>(s.realloc||0)+(s.pending||0)+(s.uncorr||0)>0);
+    if(bad.length)items.push(['ac',`🔴 ICMP — ${bad.length} disco/i con settori danneggiati (SMART)`,bad.map(s=>`${s.hdd}: riallocati ${s.realloc}, in attesa ${s.pending}, non correggibili ${s.uncorr}`).join(' • ')+'. Sostituire il disco prima che il RAID si degradi.']);
   }
   // CFE / ICP status
   const cfeFaults=r.cfe.faults||[];
@@ -1334,7 +1597,8 @@ function renderLamp(r){
     const pct=Math.min(100,raw);
     const lc=raw>=90?'var(--crit)':raw>=75?'var(--yellow)':'var(--green)';
     const scale=st.source==='storico'
-      ?`mediana di ${st.samples} lampade sostituite su questo proiettore (${st.min}–${st.max}h)`
+      ?`mediana di ${st.samples} lampade dello stesso modello (${esc(r.lamp.article)}) già sostituite su questo proiettore: ${st.min}–${st.max}h`
+      :r.lampHistory.length?`riferimento generico: nello storico ci sono meno di 3 lampade di questo modello con almeno 100h`
       :`riferimento generico: nessuno storico sostituzioni nel pacchetto`;
     return`<div class="panel"><div class="ph"><div class="dot d-yel"></div><span class="ph-title">${label}</span></div>
       <div class="ig">
@@ -1371,8 +1635,8 @@ function renderLamp(r){
   const maxDur=Math.max(60,...r.lampSessions.map(s=>s.dur||0));
   const fmtDur=m=>m==null?null:(m>=60?Math.floor(m/60)+'h'+String(m%60).padStart(2,'0'):m+'min');
   const sessHtml=r.lampSessions.length?r.lampSessions.map(s=>{const p=s.dur?Math.max(4,Math.round(s.dur/maxDur*100)):4;
-    const note=s.crit?'⚡ CRIT':s.open?'in corso':s.repeats?'×'+(s.repeats+1):'';
-    return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${fmtDur(s.dur)||(s.crit?'ABORT':'…')}</span><span class="lr-note" style="${s.crit?'':'color:var(--muted)'}">${note}</span></div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata nel ProjectorLog</div>`;
+    const note=s.crit?'⚡ CRIT':s.cut?'⚡ corrente':s.open?'in corso':s.repeats?'×'+(s.repeats+1):'';
+    return`<div class="lrow"><span class="lr-dt">${esc(s.dt)}</span><div class="lr-bar ${s.crit||s.cut?'c':'n'}"><div class="lr-fill" style="width:${p}%"></div></div><span class="lr-dur">${fmtDur(s.dur)||(s.crit?'ABORT':'…')}</span><span class="lr-note" style="${s.crit||s.cut?'':'color:var(--muted)'}">${note}</span></div>`;}).join(''):`<div class="empty">Nessuna sessione lampada trovata nel ProjectorLog</div>`;
   $('tab-lamp').innerHTML=`
   ${laserHtml}
   <div class="${r.lamp2?'grid2':'grid2'}">
@@ -1449,7 +1713,6 @@ function renderDevice(r){
     </div>
   </div>
   ${r.activeErrors.length?`<div class="panel g1"><div class="ph"><div class="dot d-red"></div><span class="ph-title">Errori Attivi — Error_messages.txt</span><span class="ph-count">${r.activeErrors.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Sev.</th><th>Codice</th><th>Messaggio</th></tr></thead><tbody>${r.activeErrors.map(e=>`<tr><td><span class="sev ${e.sev==='ERROR'?'se':e.sev==='WARN'?'sw':'si'}">${e.sev}</span></td><td class="dt">${esc(e.code)}</td><td class="hi" style="font-size:11px;">${esc(e.msg)}</td></tr>`).join('')}</tbody></table></div></div>`:''}
-  ${r.raidStatus?`<div class="panel g1"><div class="ph"><div class="dot ${r.raidStatus.state&&r.raidStatus.state.toLowerCase()==='online'?'d-green':'d-red'}"></div><span class="ph-title">RAID ICMP — ${esc(r.raidStatus.state||'unknown')}</span><span class="ph-count">${r.raidStatus.hdds.length} HDD</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Porta</th><th>Modello</th><th>Seriale</th><th>Dimensione</th><th>Stato</th></tr></thead><tbody>${r.raidStatus.hdds.map(h=>{const ok=h.error==='None'&&h.available==='Yes';return`<tr><td class="dt">${esc(h.port)}</td><td>${esc(h.model||'—')}</td><td class="dt">${esc(h.serial||'—')}</td><td class="dt">${esc(h.size?h.size+' GB':'—')}</td><td><span class="sev ${ok?'so':'se'}">${ok?'OK':esc(h.error||'ERROR')}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:''}
   ${boardsHtml}
   <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Firmware &amp; Software</span></div><div class="scroll-wrap" style="max-height:400px;">${versHtml}</div></div>
   ${r.temps.length||r.voltages.length||r.fanSpeeds.length?`<div class="sec-label" style="margin-top:20px;">Snapshot Hardware</div>
@@ -1462,15 +1725,66 @@ function renderDevice(r){
 `;
 }
 
+// ── ICMP ──
+function renderIcmp(r){
+  const ic=r.icmp;
+  if(!ic){$('tab-icmp').innerHTML='';return;}
+  const iv=v=>`<div class="iv">${esc(v||'—')}</div>`;
+  const st=ic.settings||{};
+  const SEVORD={ac:0,aw:1,ao:2};
+  const issues=[...ic.issues].sort((a,b)=>SEVORD[a.sev]-SEVORD[b.sev]||b.count-a.count);
+  const nCrit=issues.filter(i=>i.sev==='ac').length,nWarn=issues.filter(i=>i.sev==='aw').length;
+  const badSmart=ic.smart.filter(s=>(s.realloc||0)+(s.pending||0)+(s.uncorr||0)>0);
+  const raid=r.raidStatus;
+  const raidOk=raid&&raid.state&&raid.state.toLowerCase()==='online';
+  const kpis=`<div class="kpi-strip">
+    <div class="kpi ${nCrit?'kc':'ko'}"><div class="kl">Problemi Critici</div><div class="kv">${nCrit}</div><div class="ks">tipi di guasto</div></div>
+    <div class="kpi ${nWarn?'kw':'ko'}"><div class="kl">Avvisi</div><div class="kv">${nWarn}</div><div class="ks">tipi di anomalia</div></div>
+    <div class="kpi ${raid?(raidOk?'ko':'kc'):'ki'}"><div class="kl">RAID</div><div class="kv" style="font-size:22px">${esc(raid?raid.state:'—')}</div><div class="ks">${raid?raid.hdds.length+' dischi':'file non presente'}</div></div>
+    <div class="kpi ${badSmart.length?'kc':ic.smart.length?'ko':'ki'}"><div class="kl">SMART</div><div class="kv" style="font-size:22px">${ic.smart.length?(badSmart.length?badSmart.length+' KO':'OK'):'—'}</div><div class="ks">${ic.smart.length?ic.smart.length+' dischi controllati':'nessun dato'}</div></div>
+    <div class="kpi ki"><div class="kl">Avvii ICMP</div><div class="kv">${ic.boots}</div><div class="ks">nel syslog</div></div>
+  </div>`;
+  const issuesHtml=issues.length?issues.map(i=>`<div class="acard ${i.sev}"><strong>${i.sev==='ac'?'🔴':i.sev==='aw'?'⚠':'ℹ'} ${esc(i.title)} — ${i.count}×</strong>${esc(i.advice)}
+      <div class="ks" style="margin-top:6px;">Prima: ${esc(i.first)} · Ultima: ${esc(i.last)}</div>
+      <div class="rawl" style="margin-top:4px;border:none;">${esc(i.example)}</div></div>`).join('')
+    :ic.lines?`<div class="acard ag"><strong>✅ Nessun guasto riconosciuto nel syslog ICMP</strong>${ic.lines} righe analizzate.</div>`
+    :`<div class="acard ao"><strong>ℹ Syslog ICMP non presente</strong>Il pacchetto contiene solo i file di configurazione dell'ICMP.</div>`;
+  const parityHtml=ic.parity?`<div class="acard ao"><strong>ℹ Report di parità sul percorso immagine</strong>Contatori identici sui tre colori (ultimo: ${ic.parity.r}, ${esc(ic.parity.last)}). L'andamento regolare suggerisce un contatore cumulativo più che un guasto: da approfondire solo se in sala compaiono artefatti.</div>`:'';
+  const infoHtml=`<div class="grid2">
+    <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">ICMP</span></div><div class="ig">
+      <div class="ic"><div class="ik">Host</div>${iv(ic.host)}</div>
+      <div class="ic"><div class="ik">Software ICMP</div>${iv(ic.version)}</div>
+      <div class="ic"><div class="ik">Log estratto il</div>${iv(ic.extracted?ic.extracted.toLocaleDateString('it-IT'):'')}</div>
+      <div class="ic"><div class="ik">Righe syslog</div>${iv(ic.lines?String(ic.lines):'')}</div>
+      <div class="ic"><div class="ik">Fuso orario</div>${iv(st.tz)}</div>
+      <div class="ic"><div class="ik">Server NTP</div>${iv(st.ntp)}</div>
+      <div class="ic"><div class="ik">Sincronia orologio</div>${iv(st.clockSync)}</div>
+      <div class="ic"><div class="ik">Orologio sicuro da</div>${iv(st.secureClock)}</div>
+      ${(st.adapters||[]).map(a=>`<div class="ic"><div class="ik">${esc(a.name)}</div>${iv(a.dhcp==='true'?'DHCP':[a.ip,a.mask&&'/'+a.mask,a.mtu&&' MTU '+a.mtu].filter(Boolean).join(''))}</div>`).join('')}
+      <div class="ic"><div class="ik">Cue automazione</div>${iv(st.cues!=null?String(st.cues):'')}</div>
+    </div><div class="ks" style="padding:8px 14px;">Gli orari del syslog ICMP sono in UTC.</div></div>
+    <div class="panel"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Storage Remoti &amp; Utenti</span></div><div class="pb">
+      ${(st.storages||[]).length?`<table class="tbl"><thead><tr><th>Nome</th><th>Tipo</th><th>Host</th></tr></thead><tbody>${st.storages.map(x=>`<tr><td class="hi">${esc(x.name)}</td><td class="dt">${esc(x.proto)}</td><td>${esc(x.host)}</td></tr>`).join('')}</tbody></table><div class="ks" style="margin:6px 0 12px;">Le credenziali FTP presenti nel file non vengono mostrate.</div>`:`<div class="ks" style="margin-bottom:10px;">Nessuno storage remoto configurato.</div>`}
+      ${(st.users||[]).length?`<table class="tbl"><thead><tr><th>Utente</th><th>Ruolo</th></tr></thead><tbody>${st.users.map(u=>`<tr><td class="hi">${esc(u.name)}</td><td class="dt">${esc(u.role)}</td></tr>`).join('')}</tbody></table>`:''}
+      ${ic.licenses.length?`<div class="ik" style="margin-top:12px;">Licenze</div>${ic.licenses.map(l=>`<div class="iv">${esc(l.name)}${l.expiry?' — '+esc(l.expiry):''}</div>`).join('')}`:''}
+    </div></div>
+  </div>`;
+  const raidHtml=raid?`<div class="panel g1"><div class="ph"><div class="dot ${raidOk?'d-green':'d-red'}"></div><span class="ph-title">RAID — ${esc(raid.state||'unknown')}</span><span class="ph-count">${raid.hdds.length} HDD</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Porta</th><th>Modello</th><th>Seriale</th><th>Dimensione</th><th>Stato</th></tr></thead><tbody>${raid.hdds.map(h=>{const ok=h.error==='None'&&h.available==='Yes';return`<tr><td class="dt">${esc(h.port)}</td><td>${esc(h.model||'—')}</td><td class="dt">${esc(h.serial||'—')}</td><td class="dt">${esc(h.size?h.size+' GB':'—')}</td><td><span class="sev ${ok?'so':'se'}">${ok?'OK':esc(h.error||'ERROR')}</span></td></tr>`;}).join('')}</tbody></table></div></div>`:'';
+  const smartHtml=ic.smart.length?`<div class="panel g1"><div class="ph"><div class="dot ${badSmart.length?'d-red':'d-green'}"></div><span class="ph-title">SMART Dischi — ultima lettura</span><span class="ph-count">${ic.smart.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th>Disco</th><th>Settori riallocati</th><th>In attesa</th><th>Non correggibili</th><th>Letto il (UTC)</th></tr></thead><tbody>${ic.smart.map(s=>{const c=v=>`<td class="${v>0?'hi':''}" style="${v>0?'color:var(--crit)':''}">${v??'—'}</td>`;return`<tr><td class="hi">${esc(s.hdd)}</td>${c(s.realloc)}${c(s.pending)}${c(s.uncorr)}<td class="dt">${esc(s.last)}</td></tr>`;}).join('')}</tbody></table></div><div class="ks" style="padding:8px 14px;">Valori diversi da zero indicano un disco che sta perdendo settori: va sostituito prima che il RAID si degradi.</div></div>`:'';
+  const otherHtml=ic.other.length?`<div class="panel g1"><div class="ph"><div class="dot d-ora"></div><span class="ph-title">Altri Errori ICMP</span>${fltInput()}<span class="ph-count">${ic.other.length}</span></div><div class="scroll-wrap"><table class="tbl"><thead><tr><th class="sortable" onclick="sortTh(this)">Volte</th><th class="sortable" onclick="sortTh(this)">Liv.</th><th class="sortable" onclick="sortTh(this)">Messaggio</th><th class="sortable" onclick="sortTh(this)">Ultima (UTC)</th></tr></thead><tbody>${ic.other.map(g=>`<tr><td class="hi">${g.count}</td><td><span class="sev ${g.lvl==='err'?'se':'sc'}">${esc(g.lvl.toUpperCase())}</span></td><td class="hi" style="font-size:11px;">${esc(g.msg)}</td><td class="dt">${esc(g.last)}</td></tr>`).join('')}</tbody></table></div><div class="ks" style="padding:8px 14px;">Errori non riconducibili ai guasti sopra, raggruppati; il rumore noto (avvio, servizi di rete) è escluso.</div></div>`:'';
+  const versHtml=ic.versionCats.length?`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Versioni Software ICMP</span>${fltInput()}<span class="ph-count">${esc(ic.version||'')}</span></div><div class="scroll-wrap" style="max-height:400px;"><table class="tbl"><tbody>${ic.versionCats.map(c=>c.items.map(i=>`<tr><td class="dt">${esc(c.cat.replace(/^icmp — /,''))}</td><td>${esc(i.display)}</td><td class="hi">${esc(i.vs)}</td></tr>`).join('')).join('')}</tbody></table></div></div>`:'';
+  $('tab-icmp').innerHTML=`${kpis}<div class="sec-label">Diagnosi ICMP</div><div class="analysis-list g1">${issuesHtml}${parityHtml}</div>${raidHtml}${smartHtml}${otherHtml}${infoHtml}<div style="height:16px"></div>${versHtml}`;
+}
+
 // ── Communicator ──
 function renderComm(r){
   const c=r.comm||{scope:'none',sessions:[],others:[]};
   // Da quale parte del log del PC vengono i dati di questa scheda.
   let scopeHtml='';
   if(c.scope==='session'&&c.sessions.length){
-    scopeHtml=`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Sessioni con questo proiettore — ${esc(c.projIp)}</span><span class="ph-count">${c.sessions.length}</span></div><div class="pb">
-      <div class="ks" style="font-size:12px;line-height:1.6;margin-bottom:8px;">Il CommunicatorLog è il log del PC del tecnico e registra tutti i proiettori collegati. Qui si analizzano solo le sessioni con l'IP di questo proiettore${c.others.length?`; sono esclusi ${c.others.length} altri collegamenti`:''}.</div>
-      ${c.sessions.map(x=>`<div class="lrow"><span class="lr-dt" style="min-width:150px">${esc(x.start)}</span><span style="color:var(--muted)">→ ${esc(x.end.slice(11))}</span></div>`).join('')}
+    scopeHtml=`<div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">Sessioni con questo proiettore — S/N ${esc(c.projSerial)}</span><span class="ph-count">${c.sessions.length}</span></div><div class="pb">
+      <div class="ks" style="font-size:12px;line-height:1.6;margin-bottom:8px;">Il CommunicatorLog è il log del PC del tecnico e registra tutti i proiettori collegati. Qui si analizzano solo le sessioni riconosciute dal seriale del proiettore (${c.verified} di ${c.sessions.length}; le altre per IP ${esc(c.projIp)})${c.others.length?`; esclusi ${c.others.length} altri collegamenti`:''}.${c.sameIp.length?` <span style="color:var(--yellow)">L'IP ${esc(c.projIp)} è usato anche da ${c.sameIp.length} altri proiettori in questo log: senza il seriale i loro eventi sarebbero stati attribuiti a questo.</span>`:''}</div>
+      <div class="scroll-wrap" style="max-height:220px;">${c.sessions.map(x=>`<div class="lrow"><span class="lr-dt" style="min-width:150px">${esc(x.start)}</span><span style="color:var(--muted);flex:1">→ ${esc(x.end.slice(11))}${x.dest&&x.dest!==c.projIp?' · '+esc(x.dest):''}</span><span class="sev ${x.verified?'so':'si'}">${x.verified?'S/N':'IP'}</span></div>`).join('')}</div>
       ${c.others.length?`<details style="margin-top:10px;"><summary class="ks" style="cursor:pointer;">Collegamenti esclusi (${c.others.length})</summary><div style="margin-top:6px;font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.7;">${c.others.map(([k,n])=>`${esc(k)} <span style="opacity:.6">×${n}</span>`).join(' · ')}</div></details>`:''}
     </div></div>`;
   }else if(c.scope==='session'){
@@ -1514,7 +1828,8 @@ function renderRaw(r){
     <div class="panel g1"><div class="ph"><div class="dot d-blue"></div><span class="ph-title">File nell'archivio ZIP</span></div><div class="pb">${filesHtml}</div></div>
     ${mkPanel('ProjectorLog',"proj",r.rawProjLines)}
     ${mkPanel(r.comm&&r.comm.scope==='session'?'CommunicatorLog — sessioni con questo proiettore':'CommunicatorLog',"comm",r.rawCommLines,
-      r.comm&&r.comm.scope==='session'?'Nessuna sessione con questo proiettore nel log del PC':'File non presente')}`;
+      r.comm&&r.comm.scope==='session'?'Nessuna sessione con questo proiettore nel log del PC':'File non presente')}
+    ${r.rawIcmpLines.length?mkPanel('ICMPSyslog (orari UTC)',"icmp",r.rawIcmpLines):''}`;
 }
 </script>
 </body>
